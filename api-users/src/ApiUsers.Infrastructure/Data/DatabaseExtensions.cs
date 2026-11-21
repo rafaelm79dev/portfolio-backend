@@ -1,6 +1,9 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 
-namespace ApiUsers.Api.Data;
+namespace ApiUsers.Infrastructure.Data;
 
 public static class DatabaseExtensions
 {

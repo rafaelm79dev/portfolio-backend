@@ -1,18 +1,12 @@
 using ApiUsers.Api.Auth;
-using ApiUsers.Api.Data;
-using Microsoft.AspNetCore.Identity;
+using ApiUsers.Application;
+using ApiUsers.Infrastructure;
+using ApiUsers.Infrastructure.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddAppDatabase();
-builder.Services.AddIdentityCore<AppUser>(options =>
-    {
-        options.User.RequireUniqueEmail = true;
-        options.Lockout.MaxFailedAccessAttempts = 5;
-        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-    })
-    .AddRoles<AppRole>()
-    .AddEntityFrameworkStores<AppDbContext>();
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
 
 var app = builder.Build();
 

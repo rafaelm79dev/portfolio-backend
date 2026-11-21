@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Identity;
 
-namespace ApiUsers.Api.Data;
+namespace ApiUsers.Infrastructure.Data;
 
 public class AppUser : IdentityUser<Guid>;

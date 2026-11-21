@@ -1,4 +1,5 @@
-using ApiUsers.Api.Data;
+using ApiUsers.Domain;
+using ApiUsers.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

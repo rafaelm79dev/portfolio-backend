@@ -1,4 +1,4 @@
-namespace ApiUsers.Api.Auth;
+namespace ApiUsers.Application.Auth;
 
 // Nullable members on purpose: an incomplete JSON body must reach the handler so it can answer 400.
 public sealed record RegisterRequest(string? Email, string? Password);

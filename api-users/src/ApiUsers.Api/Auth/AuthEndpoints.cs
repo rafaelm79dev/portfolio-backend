@@ -1,12 +1,10 @@
 using System.ComponentModel.DataAnnotations;
-using ApiUsers.Api.Data;
-using Microsoft.AspNetCore.Identity;
+using ApiUsers.Application.Auth;
 
 namespace ApiUsers.Api.Auth;
 
 public static class AuthEndpoints
 {
-    private const string UserRole = "User";
     private const int MaxEmailLength = 256;    // matches the Identity column size
     private const int MaxPasswordLength = 128; // avoids hashing arbitrarily large inputs
 
@@ -17,10 +15,7 @@ public static class AuthEndpoints
         return group;
     }
 
-    private static async Task<IResult> RegisterAsync(
-        RegisterRequest? request,
-        UserManager<AppUser> users,
-        RoleManager<AppRole> roles)
+    private static async Task<IResult> RegisterAsync(RegisterRequest? request, AuthService auth, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(request?.Email)
@@ -42,33 +37,14 @@ public static class AuthEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        var email = request!.Email!.Trim();
-        var user = new AppUser { UserName = email, Email = email };
+        var result = await auth.RegisterAsync(request!.Email!.Trim(), request.Password!, ct);
 
-        var created = await users.CreateAsync(user, request.Password!);
-        if (!created.Succeeded)
+        return result.Status switch
         {
-            if (created.Errors.Any(e => e.Code is nameof(IdentityErrorDescriber.DuplicateUserName)
-                                         or nameof(IdentityErrorDescriber.DuplicateEmail)))
-            {
-                return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Email already registered.");
-            }
-
-            return Results.ValidationProblem(created.Errors
-                .GroupBy(e => e.Code)
-                .ToDictionary(g => g.Key, g => g.Select(e => e.Description).ToArray()));
-        }
-
-        // Idempotent and safe under concurrency: if another request created the role first, CreateAsync just fails.
-        await roles.CreateAsync(new AppRole { Name = UserRole });
-        var inRole = await users.AddToRoleAsync(user, UserRole);
-        if (!inRole.Succeeded)
-        {
-            // Never leave a half-created account behind or report a role the user does not have.
-            await users.DeleteAsync(user);
-            return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Could not complete registration.");
-        }
-
-        return Results.Json(new UserResponse(user.Id, email, [UserRole]), statusCode: StatusCodes.Status201Created);
+            RegistrationStatus.Created => Results.Json(result.User, statusCode: StatusCodes.Status201Created),
+            RegistrationStatus.Conflict => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Email already registered."),
+            RegistrationStatus.Invalid => Results.ValidationProblem(result.Errors!.ToDictionary(e => e.Key, e => e.Value)),
+            _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Could not complete registration."),
+        };
     }
 }

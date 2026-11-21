@@ -22,6 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ApiUsers.Api\ApiUsers.Api.csproj" />
+    <ProjectReference Include="..\..\src\ApiUsers.Domain\ApiUsers.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ApiUsers.Application\ApiUsers.Application.csproj" />
+    <ProjectReference Include="..\..\src\ApiUsers.Infrastructure\ApiUsers.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

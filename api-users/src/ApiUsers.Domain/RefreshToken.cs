@@ -1,4 +1,4 @@
-namespace ApiUsers.Api.Data;
+namespace ApiUsers.Domain;
 
 /// <summary>
 /// A refresh token issued to a user. Only the SHA-256 hash of the token is stored.
@@ -15,4 +15,9 @@ public class RefreshToken
     public DateTime ExpiresAtUtc { get; set; }
     public DateTime? RevokedAtUtc { get; set; }
     public string? ReplacedByTokenHash { get; set; }
+
+    public bool IsActive(DateTime nowUtc) => RevokedAtUtc is null && nowUtc < ExpiresAtUtc;
+
+    /// <summary>Revokes the token. A token that was already revoked keeps its original timestamp.</summary>
+    public void Revoke(DateTime nowUtc) => RevokedAtUtc ??= nowUtc;
 }
