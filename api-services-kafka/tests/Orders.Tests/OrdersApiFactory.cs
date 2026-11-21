@@ -20,5 +20,6 @@ public sealed class OrdersApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Orders", _connectionString);
+        builder.UseSetting("Kafka:Enabled", "false");
     }
 }
