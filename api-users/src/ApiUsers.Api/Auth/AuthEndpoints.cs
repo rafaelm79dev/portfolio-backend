@@ -12,7 +12,32 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/auth").WithTags("Auth");
         group.MapPost("/register", RegisterAsync);
+        group.MapPost("/login", LoginAsync);
         return group;
+    }
+
+    private static async Task<IResult> LoginAsync(LoginRequest? request, AuthService auth, CancellationToken ct)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request?.Email) || request.Email.Trim().Length > MaxEmailLength)
+        {
+            errors["Email"] = ["Email is required."];
+        }
+        if (string.IsNullOrEmpty(request?.Password) || request.Password.Length > MaxPasswordLength)
+        {
+            errors["Password"] = ["Password is required."];
+        }
+        if (errors.Count > 0)
+        {
+            return Results.ValidationProblem(errors);
+        }
+
+        var tokens = await auth.LoginAsync(request!.Email!.Trim(), request.Password!, ct);
+
+        // One generic answer for unknown email, wrong password and locked account.
+        return tokens is null
+            ? Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Unauthorized", detail: "Invalid email or password.")
+            : Results.Ok(tokens);
     }
 
     private static async Task<IResult> RegisterAsync(RegisterRequest? request, AuthService auth, CancellationToken ct)

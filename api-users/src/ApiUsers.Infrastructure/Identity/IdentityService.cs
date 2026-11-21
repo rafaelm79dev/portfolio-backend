@@ -37,4 +37,30 @@ public sealed class IdentityService(UserManager<AppUser> users, RoleManager<AppR
 
         return new RegistrationResult(RegistrationStatus.Created, new UserResponse(user.Id, email, [role]));
     }
+
+    public async Task<UserResponse?> ValidateCredentialsAsync(string email, string password, CancellationToken ct)
+    {
+        var user = await users.FindByEmailAsync(email);
+        if (user is null)
+        {
+            // Spend the same hashing time as a real check so response time does not reveal whether the email exists.
+            users.PasswordHasher.HashPassword(new AppUser(), password);
+            return null;
+        }
+
+        if (await users.IsLockedOutAsync(user))
+        {
+            return null;
+        }
+
+        if (!await users.CheckPasswordAsync(user, password))
+        {
+            await users.AccessFailedAsync(user);
+            return null;
+        }
+
+        await users.ResetAccessFailedCountAsync(user);
+        var roles = await users.GetRolesAsync(user);
+        return new UserResponse(user.Id, user.Email!, [.. roles]);
+    }
 }
