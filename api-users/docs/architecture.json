@@ -1,0 +1,151 @@
+{
+  "project": "api-users",
+  "purpose": "REST API (.NET 10, Minimal APIs): register, login, JWT + single-use refresh tokens with reuse detection, roles User/Admin, admin-only paginated user list, rate limiting on /auth.",
+  "basedOn": "Código del repositorio, rama feat/api-users (2026-11-21).",
+  "stack": {
+    "runtime": ".NET 10",
+    "web": "ASP.NET Core Minimal APIs",
+    "auth": "JwtBearer (HS256) + ASP.NET Core Identity (AddIdentityCore, Guid keys)",
+    "orm": "EF Core 10 (IdentityDbContext<AppUser, AppRole, Guid>)",
+    "databases": ["SqlServer (default)", "PostgreSql (also Supabase)"],
+    "docs": "Microsoft.AspNetCore.OpenApi + Scalar (Development only)",
+    "tests": "xUnit integration tests against a real DB container (both engines, selected with TEST_DB_PROVIDER); WebApplicationFactory<Program>"
+  },
+  "layers": [
+    {
+      "name": "ApiUsers.Domain",
+      "path": "src/ApiUsers.Domain",
+      "dependsOn": [],
+      "contains": ["RefreshToken (IsActive, Revoke; FamilyId groups a rotation chain)", "Roles (User, Admin constants)"]
+    },
+    {
+      "name": "ApiUsers.Application",
+      "path": "src/ApiUsers.Application",
+      "dependsOn": ["Domain"],
+      "contains": [
+        "AuthService (Register/Login/Refresh/Logout use cases)",
+        "UserService (GetCurrent/List/IsAdmin)",
+        "DTOs in Auth/AuthDtos.cs (RegisterRequest, LoginRequest, RefreshRequest, TokenResponse, UserResponse), PagedResponse<T>, RegistrationResult/RegistrationStatus",
+        "JwtOptions (section 'Jwt')",
+        "Ports: IIdentityService, ITokenGenerator, IRefreshTokenRepository"
+      ],
+      "rules": ["Must not reference UserManager or EF Core"]
+    },
+    {
+      "name": "ApiUsers.Infrastructure",
+      "path": "src/ApiUsers.Infrastructure",
+      "dependsOn": ["Application", "Domain (transitive)"],
+      "contains": [
+        "IdentityService : IIdentityService (wraps UserManager, lockout, roles, paging, decoy hash on failed paths, duplicate-registration race handling)",
+        "JwtTokenGenerator : ITokenGenerator (HS256 JWT, 32 random bytes refresh value, SHA-256 hash)",
+        "RefreshTokenRepository : IRefreshTokenRepository (atomic TryRotate via ExecuteUpdate, RevokeFamily)",
+        "AppDbContext, AppUser, AppRole, DatabaseOptions, DatabaseExtensions (provider switch, MigrateDatabaseAsync, SeedDatabaseAsync), DbSeeder",
+        "DependencyInjection.AddInfrastructure (Identity options incl. password length 10 and lockout, JwtOptions validation, DI registrations)"
+      ],
+      "rules": ["Must not reference Api or the Migrations projects"]
+    },
+    {
+      "name": "ApiUsers.Migrations.SqlServer / ApiUsers.Migrations.PostgreSql",
+      "path": "src/ApiUsers.Migrations.*",
+      "dependsOn": ["Infrastructure"],
+      "contains": ["One EF migration set per engine (InitialCreate each)"],
+      "rules": ["Selected by assembly name in DatabaseExtensions.AddAppDatabase; a model change needs a migration in BOTH projects"]
+    },
+    {
+      "name": "ApiUsers.Api",
+      "path": "src/ApiUsers.Api",
+      "dependsOn": ["Application", "Infrastructure", "Domain", "Migrations.SqlServer", "Migrations.PostgreSql"],
+      "contains": [
+        "Program.cs (composition root, middleware order, public partial class Program)",
+        "Auth/AuthEndpoints.cs, Users/UserEndpoints.cs (input validation + HTTP mapping only)",
+        "Auth/JwtAuthenticationExtensions.cs (JwtBearer params: MapInboundClaims=false, ClockSkew=0, only HS256, NameClaim=sub, RoleClaim=role)",
+        "Security/RateLimitingExtensions.cs (sliding window per client IP on /auth/*, 429 + Retry-After)",
+        "Security/ForwardedHeadersExtensions.cs (opt-in trust of X-Forwarded-For/Proto for listed proxies only)",
+        "OpenApi/BearerSecurityTransformers.cs"
+      ]
+    }
+  ],
+  "dependencyDirection": "Api -> Application -> Domain; Api -> Infrastructure -> Application; Migrations.* -> Infrastructure. Enforced by tests/ArchitectureTests.cs.",
+  "startupPipeline": [
+    "Services: AddApplication, AddInfrastructure, AddJwtAuthentication, AddAppRateLimiting, AddAppForwardedHeaders, AddOpenApi",
+    "MigrateDatabaseAsync then SeedDatabaseAsync (both only if Database:MigrateOnStartup = true)",
+    "UseAppForwardedHeaders first, only if ForwardedHeaders:Enabled",
+    "If not Development: UseHsts + UseHttpsRedirection",
+    "If Development: MapOpenApi + MapScalarApiReference (/scalar/v1)",
+    "UseRateLimiter, UseAuthentication, UseAuthorization, then map endpoints"
+  ],
+  "endpoints": [
+    { "method": "GET", "path": "/health", "auth": "none", "handler": "inline in Program.cs" },
+    { "method": "POST", "path": "/auth/register", "auth": "none", "responses": [201, 400, 409, 429], "notes": "Always role User. Email max 256, password 10..128. Simultaneous registrations of the same email give one 201 and the rest 409." },
+    { "method": "POST", "path": "/auth/login", "auth": "none", "responses": [200, 400, 401, 429], "notes": "Single generic 401 for unknown email / bad password / locked account." },
+    { "method": "POST", "path": "/auth/refresh", "auth": "none", "responses": [200, 400, 401, 429], "notes": "Token max 512 chars." },
+    { "method": "POST", "path": "/auth/logout", "auth": "bearer", "responses": [204, 400, 401, 429], "notes": "Revokes family only if token belongs to caller; idempotent." },
+    { "method": "GET", "path": "/users/me", "auth": "bearer", "responses": [200, 401], "notes": "Always re-read from store (token may outlive account)." },
+    { "method": "GET", "path": "/users?page=&pageSize=", "auth": "bearer + role Admin (re-checked in the store)", "responses": [200, 400, 401, 403], "notes": "page 1..1_000_000, pageSize 1..100 (default 20), ordered by email." }
+  ],
+  "keyFlows": {
+    "login": "Endpoint validates -> AuthService.LoginAsync -> IIdentityService.ValidateCredentialsAsync -> new RefreshToken (new FamilyId) stored as hash -> JWT access token (15 min) + plain refresh value (7 days) returned.",
+    "refresh": "Hash incoming token -> FindByHash. Missing: null. Revoked: RevokeFamily (theft) + null. Expired: null. Account locked/deleted (GetUserIfCanSignIn): null. TryRotate (atomic): on lost race RevokeFamily + null. Success: new token in same family.",
+    "logout": "Find by hash; if owned by caller, RevokeFamily. Always 204 if authenticated.",
+    "seeding": "DbSeeder creates roles User/Admin and admin from Admin:Email/Admin:Password. Existing non-admin account with that email is promoted only if password matches; otherwise warning logged and startup continues."
+  },
+  "dataModel": {
+    "tables": ["AspNetUsers (AppUser)", "AspNetRoles (AppRole)", "Identity join/claim tables", "RefreshTokens"],
+    "RefreshTokens": {
+      "columns": ["Id (PK)", "UserId (FK AppUser, cascade)", "FamilyId", "TokenHash (max 64, unique)", "CreatedAtUtc", "ExpiresAtUtc", "RevokedAtUtc?", "ReplacedByTokenHash? (max 64)"],
+      "indexes": ["TokenHash unique", "FamilyId", "UserId"]
+    }
+  },
+  "configuration": {
+    "Database:Provider": "SqlServer | PostgreSql (invalid value fails startup)",
+    "Database:MigrateOnStartup": "bool, default false (true in Development); gates migrations AND seeding",
+    "ConnectionStrings:Default": "required, secret (user-secrets / env)",
+    "Jwt:Issuer / Audience / SigningKey / AccessTokenMinutes / RefreshTokenDays": "validated on start; SigningKey >= 32 bytes, secret",
+    "Admin:Email / Admin:Password": "optional, secret; initial admin seed",
+    "RateLimiting:AuthPermitLimit / AuthWindowSeconds": "requests per client IP per sliding window on /auth/*; defaults 20 / 60",
+    "ForwardedHeaders:Enabled / KnownProxies / KnownNetworks / ForwardLimit": "default off; when on, at least one known proxy or network is required or startup fails",
+    "docker": "docker-compose.yml: sqlserver (default), postgres (profile 'postgres'); secrets from .env (not versioned)"
+  },
+  "securityDecisions": [
+    "Refresh tokens stored only as SHA-256 hash; single use; reuse revokes the whole family",
+    "Rotation is atomic (conditional ExecuteUpdate) so concurrent use yields exactly one success",
+    "Lockout after 5 failures for 5 minutes; generic 401 to avoid user enumeration; unknown email and locked account both pay a decoy password hash",
+    "Password: minimum 10 characters plus Identity's default complexity rules",
+    "Refresh refuses locked-out accounts; GET /users re-checks the Admin role in the store instead of trusting only the token claim",
+    "Rate limit on /auth/*: sliding window per client IP, in memory (per instance)",
+    "Forwarded headers are opt-in and only from listed proxies, so clients cannot fake their IP",
+    "HSTS and HTTPS redirection outside Development",
+    "Admin never hardcoded; comes from configuration",
+    "OpenAPI/Scalar exposed only in Development"
+  ],
+  "knownLimitations": [
+    "No email confirmation (anyone can register someone else's email)",
+    "409 on register reveals that an email exists",
+    "Expired/revoked refresh tokens are never purged",
+    "Single HS256 signing key, no kid / key rotation window",
+    "Rate limit counters are per instance (no shared store)"
+  ],
+  "tests": {
+    "path": "tests/ApiUsers.Tests",
+    "files": ["ArchitectureTests", "DataTests", "DomainTests", "ForwardedHeadersTests", "HardeningTests", "JwtOptionsTests", "LoginTests", "MeTests", "OpenApiTests", "ProviderTests", "RefreshTests", "RegisterTests", "RolesTests", "SmokeTests"],
+    "helpers": ["ApiFactory (container per engine, rate limit set high)", "TestHelpers"],
+    "count": "106 tests; run with `dotnet test` and `TEST_DB_PROVIDER=PostgreSql dotnet test`"
+  },
+  "howToAddAFeature": [
+    "1. Domain: add entity/rule only if it has behavior independent of storage.",
+    "2. Application: add use case in a service + port interface for any storage/crypto/IO need + DTOs.",
+    "3. Infrastructure: implement the port, register it in DependencyInjection.AddInfrastructure; extend AppDbContext if needed.",
+    "4. If the schema changed: add a migration in BOTH Migrations.SqlServer and Migrations.PostgreSql.",
+    "5. Api: add endpoint under a Map* extension, validate input there, map results to HTTP, declare Produces*/ProducesProblem, call it from Program.cs.",
+    "6. Tests: add integration tests, keep ArchitectureTests green, run against both providers.",
+    "7. Update README and this file."
+  ],
+  "pitfalls": [
+    "Do not use UserManager or EF types in Application.",
+    "Endpoints use nullable request records on purpose so malformed bodies return 400 instead of failing binding.",
+    "JwtBearer MapInboundClaims=false: read claims as 'sub' and 'role', not ClaimTypes.*.",
+    "MigrateOnStartup=false by default: seeding does not run unless it is enabled.",
+    "Do not enable ForwardedHeaders without listing the proxies: an empty list would make the framework trust every client.",
+    "Tests need a high RateLimiting:AuthPermitLimit (ApiFactory sets it) because the suite makes many /auth calls from one address."
+  ]
+}

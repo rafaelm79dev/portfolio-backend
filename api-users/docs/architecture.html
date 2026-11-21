@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>api-users · Arquitectura</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--tx:#1d2733;--mut:#5b6775;--bd:#dde2e8;--api:#dbeafe;--app:#dcfce7;--dom:#fef3c7;--inf:#fce7f3;--mig:#ede9fe}
+@media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2129;--tx:#e6ebf0;--mut:#98a4b3;--bd:#2d3744;--api:#1e3a5f;--app:#17402a;--dom:#4a3a10;--inf:#4a1d38;--mig:#35295a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:24px 16px}
+main{max-width:980px;margin:auto}h1{margin:0 0 4px}h2{margin:32px 0 10px;font-size:18px}
+.sub{color:var(--mut);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 16px}
+.layers{display:grid;gap:10px}
+.layer{border-radius:8px;padding:12px 16px;border:1px solid var(--bd)}
+.layer b{display:block}.layer small{color:var(--mut)}
+.api{background:var(--api)}.app{background:var(--app)}.dom{background:var(--dom)}.inf{background:var(--inf)}.mig{background:var(--mig)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}th{color:var(--mut);font-weight:600;font-size:13px}
+code{font:13px ui-monospace,Consolas,monospace;background:var(--bg);padding:1px 5px;border-radius:4px}
+pre{margin:0;white-space:pre-wrap;font:13px ui-monospace,Consolas,monospace}
+.t{overflow-x:auto}
+ol,ul{margin:6px 0 0;padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>api-users</h1>
+<p class="sub">.NET 10 · Minimal APIs · Clean Architecture · JWT + refresh tokens · SQL Server / PostgreSQL. Versión estructurada de esta página: <code>architecture.json</code>.</p>
+
+<h2>Capas y dependencias</h2>
+<div class="layers">
+  <div class="layer api"><b>Api</b>Program.cs, AuthEndpoints, UserEndpoints, JwtAuthenticationExtensions, límite de peticiones, ForwardedHeaders, OpenAPI/Scalar. Solo traduce HTTP y valida entrada.<small>→ Application, Infrastructure, Migrations.*</small></div>
+  <div class="row">
+    <div class="layer inf"><b>Infrastructure</b>IdentityService, JwtTokenGenerator, RefreshTokenRepository, AppDbContext, DbSeeder, selección de proveedor.<small>→ Application (implementa los puertos)</small></div>
+    <div class="layer mig"><b>Migrations.SqlServer / .PostgreSql</b>Un juego de migraciones por motor.<small>→ Infrastructure</small></div>
+  </div>
+  <div class="layer app"><b>Application</b>AuthService, UserService, DTOs, JwtOptions y puertos: IIdentityService, ITokenGenerator, IRefreshTokenRepository.<small>→ Domain. No conoce UserManager ni EF Core.</small></div>
+  <div class="layer dom"><b>Domain</b>RefreshToken (IsActive, Revoke, FamilyId), Roles. Sin dependencias.</div>
+</div>
+
+<h2>Endpoints</h2>
+<div class="t"><table>
+<tr><th>Método</th><th>Ruta</th><th>Acceso</th><th>Respuestas</th><th>Notas</th></tr>
+<tr><td>GET</td><td><code>/health</code></td><td>público</td><td>200</td><td></td></tr>
+<tr><td>POST</td><td><code>/auth/register</code></td><td>público</td><td>201, 400, 409, 429</td><td>Siempre rol User; contraseña de 10 a 128 caracteres</td></tr>
+<tr><td>POST</td><td><code>/auth/login</code></td><td>público</td><td>200, 400, 401, 429</td><td>401 genérico (no revela el motivo)</td></tr>
+<tr><td>POST</td><td><code>/auth/refresh</code></td><td>público</td><td>200, 400, 401, 429</td><td>Token de un solo uso</td></tr>
+<tr><td>POST</td><td><code>/auth/logout</code></td><td>Bearer</td><td>204, 400, 401, 429</td><td>Revoca la familia, idempotente</td></tr>
+<tr><td>GET</td><td><code>/users/me</code></td><td>Bearer</td><td>200, 401</td><td>Lee siempre de la BD</td></tr>
+<tr><td>GET</td><td><code>/users?page&amp;pageSize</code></td><td>Bearer + Admin (se confirma en la BD)</td><td>200, 400, 401, 403</td><td>pageSize 1–100, por email</td></tr>
+</table></div>
+
+<h2>Flujo de refresh (el más delicado)</h2>
+<div class="card"><ol>
+<li>Se calcula el hash SHA-256 del token recibido y se busca.</li>
+<li>No existe → 401. Ya revocado → se revoca toda la familia (robo) y 401. Expirado → 401.</li>
+<li>Cuenta bloqueada o borrada → 401.</li>
+<li><code>TryRotateAsync</code> atómico (UPDATE condicional): si pierde la carrera → revoca familia y 401.</li>
+<li>Éxito → nuevo access token (15 min) + nuevo refresh (7 días) en la misma familia.</li>
+</ol></div>
+
+<h2>Modelo de datos</h2>
+<div class="card"><b>RefreshTokens</b>: Id (PK), UserId (FK a AppUser, cascade), FamilyId, TokenHash (único, 64), CreatedAtUtc, ExpiresAtUtc, RevokedAtUtc?, ReplacedByTokenHash?. Índices: TokenHash (único), FamilyId, UserId. Más las tablas de Identity (AspNetUsers, AspNetRoles…).</div>
+
+<h2>Arranque y configuración</h2>
+<div class="card"><ul>
+<li>Orden: servicios → migrar y sembrar (solo si <code>Database:MigrateOnStartup=true</code>) → ForwardedHeaders (opcional) → HSTS y redirección HTTPS (fuera de Development) → OpenAPI/Scalar (solo Development) → límite de peticiones → auth → endpoints.</li>
+<li><code>Database:Provider</code>: SqlServer | PostgreSql. <code>ConnectionStrings:Default</code>, <code>Jwt:SigningKey</code> (≥32 bytes) y <code>Admin:*</code> van como secretos.</li>
+<li><code>RateLimiting:AuthPermitLimit</code> y <code>AuthWindowSeconds</code> (20 por 60 s por IP, ventana deslizante). <code>ForwardedHeaders:*</code> viene desactivado; al activarlo hay que listar los proxies o la API no arranca.</li>
+<li>Docker: SQL Server por defecto, PostgreSQL con el perfil <code>postgres</code>.</li>
+</ul></div>
+
+<h2>Añadir una feature</h2>
+<div class="card"><ol>
+<li>Domain: solo si hay regla propia.</li>
+<li>Application: caso de uso, DTOs y puerto para todo acceso externo.</li>
+<li>Infrastructure: implementar el puerto y registrarlo en <code>AddInfrastructure</code>.</li>
+<li>Cambio de esquema: migración en <b>ambos</b> proyectos de migraciones.</li>
+<li>Api: endpoint con validación, <code>Produces*</code> y registro en Program.cs.</li>
+<li>Tests de integración en ambos motores; <code>ArchitectureTests</code> debe seguir en verde.</li>
+</ol></div>
+
+<h2>Trampas conocidas</h2>
+<div class="card"><ul>
+<li>Claims <code>sub</code> y <code>role</code> sin mapear (<code>MapInboundClaims=false</code>).</li>
+<li>Los records de request son nullables a propósito para devolver 400 en cuerpos incompletos.</li>
+<li>Sin <code>MigrateOnStartup</code> tampoco se siembra admin ni roles.</li>
+<li>No actives <code>ForwardedHeaders</code> sin indicar los proxies: con listas vacías el framework confiaría en cualquier cliente.</li>
+<li>Los tests fijan un límite de peticiones muy alto (<code>ApiFactory</code>), porque la suite hace muchas llamadas a <code>/auth</code> desde una sola dirección.</li>
+</ul></div>
+
+<h2>Limitaciones conocidas</h2>
+<div class="card"><ul>
+<li>Sin confirmación de email: se puede registrar el email de otra persona.</li>
+<li>El <code>409</code> del registro revela que un email existe.</li>
+<li>Los refresh tokens vencidos o revocados no se purgan.</li>
+<li>Una sola clave de firma HS256, sin <code>kid</code> ni ventana de rotación.</li>
+<li>El límite de peticiones es en memoria y por instancia.</li>
+</ul></div>
+</main>
+</body>
+</html>
