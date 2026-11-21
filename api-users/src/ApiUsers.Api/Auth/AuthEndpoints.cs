@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using ApiUsers.Api.Security;
 using ApiUsers.Application.Auth;
 
 namespace ApiUsers.Api.Auth;
@@ -12,7 +13,7 @@ public static class AuthEndpoints
 
     public static RouteGroupBuilder MapAuth(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/auth").WithTags("Auth");
+        var group = app.MapGroup("/auth").WithTags("Auth").RequireRateLimiting(RateLimitingExtensions.AuthPolicy);
         group.MapPost("/register", RegisterAsync)
             .WithSummary("Registers a new user with the User role.")
             .Produces<UserResponse>(StatusCodes.Status201Created)

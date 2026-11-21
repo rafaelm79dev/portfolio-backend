@@ -6,7 +6,7 @@
 |---|---|
 | **Qué hace** | Registra usuarios, les permite iniciar sesión y devuelve tokens JWT. También renueva y cierra sesiones, y tiene un endpoint de administración. |
 | **Cómo está armado** | .NET 10 con Minimal APIs y Clean Architecture en 4 proyectos: `Domain`, `Application`, `Infrastructure` y `Api`. |
-| **Qué implementa** | Login con JWT (15 min) y refresh token de un solo uso (7 días) con detección de robo · roles `User` y `Admin` · bloqueo de cuenta tras 5 intentos fallidos · listado paginado de usuarios · documentación con OpenAPI/Scalar · 84 tests de integración. |
+| **Qué implementa** | Login con JWT (15 min) y refresh token de un solo uso (7 días) con detección de robo · roles `User` y `Admin` · bloqueo de cuenta tras 5 intentos fallidos · listado paginado de usuarios · límite de peticiones en `/auth` · documentación con OpenAPI/Scalar · 99 tests de integración. |
 | **Base de datos** | **SQL Server** o **PostgreSQL** (incluye Supabase), según `Database:Provider`. |
 | **Cómo probarlo** | Necesitas .NET 10 y Docker. Sigue la sección [Puesta en marcha](#puesta-en-marcha-con-sql-server): son cuatro pasos. |
 
@@ -113,10 +113,20 @@ El host y el usuario dependen de si usas la conexión directa o el pooler; cópi
 | `Jwt:AccessTokenMinutes` | Vida del access token | `15` |
 | `Jwt:RefreshTokenDays` | Vida del refresh token | `7` |
 | `Admin:Email` / `Admin:Password` | Administrador inicial (se omite si falta alguno) | — |
+| `RateLimiting:AuthPermitLimit` | Peticiones permitidas a `/auth/*` por IP en cada ventana | `20` |
+| `RateLimiting:AuthWindowSeconds` | Duración de la ventana, en segundos | `60` |
 
 La API valida `Jwt` y `Database:Provider` al arrancar y falla con un mensaje claro si algo está mal. Las claves obligatorias nunca se guardan en el repositorio: usa `dotnet user-secrets` en desarrollo y variables de entorno (`Jwt__SigningKey`, ...) en otros entornos.
 
 Con `Database:MigrateOnStartup` en `false` la API no toca el esquema: aplica las migraciones y crea los roles por tu cuenta antes de usarla.
+
+### Seguridad y despliegue
+
+- **Contraseñas:** mínimo 10 caracteres, con mayúscula, minúscula, dígito y símbolo.
+- **Límite de peticiones:** `/auth/*` responde `429` con `Retry-After` al superar el límite por IP. Detrás de un proxy inverso, reenvía la IP real del cliente (`ForwardedHeaders`); si no, todos los clientes compartirán la cuota del proxy.
+- **HTTPS:** fuera de Development la API activa HSTS y redirige HTTP a HTTPS. Si un proxy termina TLS, reenvía también el esquema original para evitar bucles de redirección.
+- **Hosts permitidos:** `AllowedHosts` viene en `*`; en producción, limítalo a tu dominio.
+- **Roles y sesiones:** el refresh rechaza cuentas bloqueadas, y `GET /users` comprueba en la base que quien llama sigue siendo `Admin`, sin esperar a que venza su access token.
 
 ## Endpoints
 
@@ -172,6 +182,16 @@ Database__Provider=SqlServer ConnectionStrings__Default="Server=localhost;Databa
 Database__Provider=PostgreSql ConnectionStrings__Default="Host=localhost;Database=x;Username=x;Password=x" \
   dotnet ef migrations add <Nombre> -p src/ApiUsers.Migrations.PostgreSql -s src/ApiUsers.Api -o Migrations
 ```
+
+## Limitaciones conocidas
+
+Cosas que esta API no hace y que conviene resolver antes de exponerla a usuarios reales:
+
+- **Sin confirmación de email.** Cualquiera puede registrar un email ajeno. Hace falta un servicio de envío de correos y exigir `EmailConfirmed` en el login.
+- **El `409` del registro revela que un email ya existe.** Es inherente a responder con un conflicto; el login sí devuelve siempre el mismo `401`.
+- **Los refresh tokens vencidos o revocados no se purgan,** así que la tabla crece. Se resuelve con una tarea periódica de limpieza.
+- **Una sola clave de firma.** Rotarla invalida los access tokens vigentes; para rotarla sin cortes haría falta un `kid` y una ventana con dos claves.
+- **Los cambios de rol o el borrado de una cuenta tardan hasta 15 minutos** en reflejarse en los endpoints que solo leen el token. `GET /users`, `GET /users/me` y el refresh sí consultan la base.
 
 ## Decisiones de diseño
 

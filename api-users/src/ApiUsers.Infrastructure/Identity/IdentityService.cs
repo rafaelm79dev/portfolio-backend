@@ -12,7 +12,22 @@ public sealed class IdentityService(UserManager<AppUser> users, AppDbContext db)
     {
         var user = new AppUser { UserName = email, Email = email };
 
-        var created = await users.CreateAsync(user, password);
+        IdentityResult created;
+        try
+        {
+            created = await users.CreateAsync(user, password);
+        }
+        catch (DbUpdateException)
+        {
+            // Two simultaneous requests with the same email can both pass Identity's duplicate check;
+            // the unique index then rejects the second insert. That is a conflict, not a server error.
+            if (await users.FindByEmailAsync(email) is not null)
+            {
+                return new RegistrationResult(RegistrationStatus.Conflict);
+            }
+            throw;
+        }
+
         if (!created.Succeeded)
         {
             if (created.Errors.Any(e => e.Code is nameof(IdentityErrorDescriber.DuplicateUserName)
@@ -44,13 +59,13 @@ public sealed class IdentityService(UserManager<AppUser> users, AppDbContext db)
         var user = await users.FindByEmailAsync(email);
         if (user is null)
         {
-            // Spend the same hashing time as a real check so response time does not reveal whether the email exists.
-            users.PasswordHasher.HashPassword(new AppUser(), password);
+            SpendHashingTime(password);
             return null;
         }
 
         if (await users.IsLockedOutAsync(user))
         {
+            SpendHashingTime(password);
             return null;
         }
 
@@ -64,10 +79,30 @@ public sealed class IdentityService(UserManager<AppUser> users, AppDbContext db)
         return await ToResponseAsync(user);
     }
 
+    // Paying the hashing cost on every failed path keeps the response time from revealing
+    // whether an email exists or an account is locked out.
+    private void SpendHashingTime(string password) => users.PasswordHasher.HashPassword(new AppUser(), password);
+
     public async Task<UserResponse?> GetUserAsync(Guid userId, CancellationToken ct)
     {
         var user = await users.FindByIdAsync(userId.ToString());
         return user is null ? null : await ToResponseAsync(user);
+    }
+
+    public async Task<UserResponse?> GetUserIfCanSignInAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(userId.ToString());
+        if (user is null || await users.IsLockedOutAsync(user))
+        {
+            return null;
+        }
+        return await ToResponseAsync(user);
+    }
+
+    public async Task<bool> IsInRoleAsync(Guid userId, string role, CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(userId.ToString());
+        return user is not null && await users.IsInRoleAsync(user, role);
     }
 
     public async Task<PagedResponse<UserResponse>> ListUsersAsync(int page, int pageSize, CancellationToken ct)

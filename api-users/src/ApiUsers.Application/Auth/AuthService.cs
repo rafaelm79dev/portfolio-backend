@@ -51,7 +51,8 @@ public sealed class AuthService(
             return null;
         }
 
-        var user = await identity.GetUserAsync(stored.UserId, ct);
+        // A locked-out or deleted account must not keep minting access tokens with a stolen refresh token.
+        var user = await identity.GetUserIfCanSignInAsync(stored.UserId, ct);
         if (user is null)
         {
             return null;

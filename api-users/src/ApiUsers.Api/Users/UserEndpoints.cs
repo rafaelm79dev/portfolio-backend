@@ -41,8 +41,14 @@ public static class UserEndpoints
     }
 
     private static async Task<IResult> ListAsync(
-        UserService users, CancellationToken ct, int page = 1, int pageSize = DefaultPageSize)
+        ClaimsPrincipal principal, UserService users, CancellationToken ct, int page = 1, int pageSize = DefaultPageSize)
     {
+        // The role claim in the token can be up to 15 minutes old: confirm against the store that the caller is still an admin.
+        if (!Guid.TryParse(principal.FindFirstValue("sub"), out var callerId) || !await users.IsAdminAsync(callerId, ct))
+        {
+            return Results.Forbid();
+        }
+
         var errors = new Dictionary<string, string[]>();
         if (page is < 1 or > MaxPage)
         {

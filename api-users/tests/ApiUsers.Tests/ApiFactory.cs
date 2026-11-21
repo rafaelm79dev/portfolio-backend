@@ -66,6 +66,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Admin:Email", AdminEmail);
         builder.UseSetting("Admin:Password", AdminPassword);
         builder.UseSetting("Database:MigrateOnStartup", "true");
+        // High enough that the suite's many /auth calls never hit the limit; rate-limit tests lower it on purpose.
+        builder.UseSetting("RateLimiting:AuthPermitLimit", "100000");
     }
 }
 
