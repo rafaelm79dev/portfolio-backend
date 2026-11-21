@@ -60,6 +60,17 @@ public sealed class IdentityService(UserManager<AppUser> users, RoleManager<AppR
         }
 
         await users.ResetAccessFailedCountAsync(user);
+        return await ToResponseAsync(user);
+    }
+
+    public async Task<UserResponse?> GetUserAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(userId.ToString());
+        return user is null ? null : await ToResponseAsync(user);
+    }
+
+    private async Task<UserResponse> ToResponseAsync(AppUser user)
+    {
         var roles = await users.GetRolesAsync(user);
         return new UserResponse(user.Id, user.Email!, [.. roles]);
     }

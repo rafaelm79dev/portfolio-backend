@@ -10,4 +10,7 @@ public interface IIdentityService
     /// null in every other case, so callers cannot tell why a login failed.
     /// </summary>
     Task<UserResponse?> ValidateCredentialsAsync(string email, string password, CancellationToken ct);
+
+    /// <summary>Returns the user with its roles, or null when it does not exist.</summary>
+    Task<UserResponse?> GetUserAsync(Guid userId, CancellationToken ct);
 }
