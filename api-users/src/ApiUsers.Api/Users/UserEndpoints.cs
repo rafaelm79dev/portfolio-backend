@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ApiUsers.Application.Auth;
 using ApiUsers.Application.Users;
 using ApiUsers.Domain;
 
@@ -13,8 +14,17 @@ public static class UserEndpoints
     public static RouteGroupBuilder MapUsers(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/users").WithTags("Users").RequireAuthorization();
-        group.MapGet("/me", GetMeAsync);
-        group.MapGet("/", ListAsync).RequireAuthorization(policy => policy.RequireRole(Roles.Admin));
+        group.MapGet("/me", GetMeAsync)
+            .WithSummary("Returns the authenticated user.")
+            .Produces<UserResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized);
+        group.MapGet("/", ListAsync)
+            .RequireAuthorization(policy => policy.RequireRole(Roles.Admin))
+            .WithSummary("Lists users, one page at a time (Admin only).")
+            .Produces<PagedResponse<UserResponse>>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
         return group;
     }
 

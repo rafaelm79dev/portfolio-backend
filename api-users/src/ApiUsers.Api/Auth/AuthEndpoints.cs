@@ -13,10 +13,27 @@ public static class AuthEndpoints
     public static RouteGroupBuilder MapAuth(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/auth").WithTags("Auth");
-        group.MapPost("/register", RegisterAsync);
-        group.MapPost("/login", LoginAsync);
-        group.MapPost("/refresh", RefreshAsync);
-        group.MapPost("/logout", LogoutAsync).RequireAuthorization();
+        group.MapPost("/register", RegisterAsync)
+            .WithSummary("Registers a new user with the User role.")
+            .Produces<UserResponse>(StatusCodes.Status201Created)
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status409Conflict);
+        group.MapPost("/login", LoginAsync)
+            .WithSummary("Exchanges email and password for an access token and a refresh token.")
+            .Produces<TokenResponse>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status401Unauthorized);
+        group.MapPost("/refresh", RefreshAsync)
+            .WithSummary("Exchanges a refresh token (single use) for a new token pair.")
+            .Produces<TokenResponse>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status401Unauthorized);
+        group.MapPost("/logout", LogoutAsync)
+            .RequireAuthorization()
+            .WithSummary("Revokes the session of a refresh token that belongs to the caller.")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status401Unauthorized);
         return group;
     }
 
