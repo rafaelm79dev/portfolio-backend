@@ -13,6 +13,7 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddJwtAuthentication();
 builder.Services.AddAppRateLimiting();
+builder.Services.AddAppForwardedHeaders();
 builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer<BearerSecurityDocumentTransformer>();
@@ -24,8 +25,12 @@ var app = builder.Build();
 await app.MigrateDatabaseAsync();
 await app.SeedDatabaseAsync();
 
-// HTTPS is enforced everywhere except local development. Behind a proxy that terminates TLS, forward
-// the original scheme (ForwardedHeaders) so the redirect does not loop.
+// First in the pipeline: HTTPS redirection and the rate limiter must see the real scheme and client IP.
+// Opt-in (ForwardedHeaders:Enabled), only for the listed proxies.
+app.UseAppForwardedHeaders();
+
+// HTTPS is enforced everywhere except local development. Behind a proxy that terminates TLS,
+// enable ForwardedHeaders so the original scheme is known and the redirect does not loop.
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
