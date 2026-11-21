@@ -1,3 +1,5 @@
+using ApiUsers.Application.Users;
+
 namespace ApiUsers.Application.Auth;
 
 /// <summary>Port to the identity store (users, passwords, roles). Implemented in Infrastructure.</summary>
@@ -13,4 +15,7 @@ public interface IIdentityService
 
     /// <summary>Returns the user with its roles, or null when it does not exist.</summary>
     Task<UserResponse?> GetUserAsync(Guid userId, CancellationToken ct);
+
+    /// <summary>One page of users (with roles) ordered by email. <paramref name="page"/> starts at 1.</summary>
+    Task<PagedResponse<UserResponse>> ListUsersAsync(int page, int pageSize, CancellationToken ct);
 }

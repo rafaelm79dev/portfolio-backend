@@ -13,6 +13,7 @@ builder.Services.AddJwtAuthentication();
 var app = builder.Build();
 
 await app.MigrateDatabaseAsync();
+await app.SeedDatabaseAsync();
 
 app.UseAuthentication();
 app.UseAuthorization();

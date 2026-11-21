@@ -34,4 +34,18 @@ public static class DatabaseExtensions
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
     }
+
+    /// <summary>
+    /// Creates the roles and the initial admin. Runs under the same <c>Database:MigrateOnStartup</c> switch
+    /// as the migrations, because it needs the schema to exist.
+    /// </summary>
+    public static async Task SeedDatabaseAsync(this WebApplication app)
+    {
+        if (!app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+        {
+            return;
+        }
+
+        await DbSeeder.SeedAsync(app.Services, app.Configuration);
+    }
 }
