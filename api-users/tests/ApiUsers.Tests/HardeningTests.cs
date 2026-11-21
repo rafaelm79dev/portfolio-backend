@@ -16,20 +16,13 @@ namespace ApiUsers.Tests;
 [Collection("api")]
 public class HardeningTests(ApiFactory factory)
 {
-    private const string WrongPassword = "Wr0ng!Password";
+    private const string WrongPassword = TestHelpers.WrongPassword;
 
     private static Task<HttpResponseMessage> Post(HttpClient client, string path, object body) =>
         client.PostAsJsonAsync(path, body);
 
     private static Task<HttpResponseMessage> TryLogin(HttpClient client, string email, string password) =>
         Post(client, "/auth/login", new LoginRequest(email, password));
-
-    private async Task<string> RegisteredEmailAsync()
-    {
-        var email = TestHelpers.NewEmail();
-        await TestHelpers.RegisterAsync(factory.CreateClient(), email);
-        return email;
-    }
 
     // ---- F: simultaneous registrations of the same email -------------------------------------------------
 
@@ -55,7 +48,7 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Auth_endpoints_return_429_with_retry_after_once_the_limit_is_exceeded()
     {
-        var limited = factory.WithWebHostBuilder(builder => builder
+        using var limited = factory.WithWebHostBuilder(builder => builder
             .UseSetting("RateLimiting:AuthPermitLimit", "3")
             .UseSetting("RateLimiting:AuthWindowSeconds", "60"));
         var client = limited.CreateClient();
@@ -74,7 +67,7 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Health_is_not_rate_limited()
     {
-        var limited = factory.WithWebHostBuilder(builder => builder.UseSetting("RateLimiting:AuthPermitLimit", "1"));
+        using var limited = factory.WithWebHostBuilder(builder => builder.UseSetting("RateLimiting:AuthPermitLimit", "1"));
         var client = limited.CreateClient();
 
         for (var i = 0; i < 5; i++)
@@ -88,12 +81,9 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Refresh_with_locked_out_account_returns_401()
     {
-        var email = await RegisteredEmailAsync();
+        var email = await TestHelpers.RegisterNewUserAsync(factory.CreateClient());
         var tokens = await TestHelpers.LoginAsync(factory.CreateClient(), email);
-        for (var i = 0; i < 5; i++)
-        {
-            await TryLogin(factory.CreateClient(), email, WrongPassword);
-        }
+        await TestHelpers.LockOutAsync(factory.CreateClient(), email);
 
         var response = await Post(factory.CreateClient(), "/auth/refresh", new RefreshRequest(tokens.RefreshToken));
 
@@ -103,7 +93,7 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Users_list_after_admin_role_is_removed_returns_403_even_with_a_valid_token()
     {
-        var email = await RegisteredEmailAsync();
+        var email = await TestHelpers.RegisterNewUserAsync(factory.CreateClient());
         using (var scope = factory.Services.CreateScope())
         {
             var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
@@ -149,7 +139,7 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Production_redirects_http_to_https()
     {
-        var production = factory.WithWebHostBuilder(builder => builder
+        using var production = factory.WithWebHostBuilder(builder => builder
             .UseEnvironment("Production")
             .UseSetting("HTTPS_PORT", "443"));
         var client = production.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -163,7 +153,7 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Production_sends_hsts_over_https()
     {
-        var production = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
+        using var production = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
         var client = production.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://example.com"),
@@ -209,7 +199,12 @@ public class HardeningTests(ApiFactory factory)
         public void Reset() => HashCalls = VerifyCalls = 0;
     }
 
-    private (HttpClient Client, CountingHasher Hasher) ClientWithCountingHasher()
+    private sealed record CountingHost(WebApplicationFactory<Program> Host, HttpClient Client, CountingHasher Hasher) : IDisposable
+    {
+        public void Dispose() => Host.Dispose();
+    }
+
+    private CountingHost ClientWithCountingHasher()
     {
         var hasher = new CountingHasher();
         var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
@@ -217,13 +212,14 @@ public class HardeningTests(ApiFactory factory)
             services.RemoveAll<IPasswordHasher<AppUser>>();
             services.AddSingleton<IPasswordHasher<AppUser>>(hasher);
         }));
-        return (host.CreateClient(), hasher);
+        return new CountingHost(host, host.CreateClient(), hasher);
     }
 
     [Fact]
     public async Task Unknown_email_pays_one_decoy_hash()
     {
-        var (client, hasher) = ClientWithCountingHasher();
+        using var counting = ClientWithCountingHasher();
+        var (client, hasher) = (counting.Client, counting.Hasher);
         hasher.Reset();
 
         await TryLogin(client, TestHelpers.NewEmail(), WrongPassword);
@@ -234,13 +230,11 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Locked_account_pays_one_decoy_hash_too()
     {
-        var (client, hasher) = ClientWithCountingHasher();
+        using var counting = ClientWithCountingHasher();
+        var (client, hasher) = (counting.Client, counting.Hasher);
         var email = TestHelpers.NewEmail();
         await TestHelpers.RegisterAsync(client, email);
-        for (var i = 0; i < 5; i++)
-        {
-            await TryLogin(client, email, WrongPassword);
-        }
+        await TestHelpers.LockOutAsync(client, email);
         hasher.Reset();
 
         var response = await TryLogin(client, email, TestHelpers.Password);
@@ -252,7 +246,8 @@ public class HardeningTests(ApiFactory factory)
     [Fact]
     public async Task Successful_login_verifies_the_password_without_a_decoy()
     {
-        var (client, hasher) = ClientWithCountingHasher();
+        using var counting = ClientWithCountingHasher();
+        var (client, hasher) = (counting.Client, counting.Hasher);
         var email = TestHelpers.NewEmail();
         await TestHelpers.RegisterAsync(client, email);
         hasher.Reset();

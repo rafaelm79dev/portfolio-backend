@@ -71,30 +71,21 @@ public class RolesTests(ApiFactory factory)
     public async Task Users_list_as_admin_returns_200_and_includes_admin()
     {
         var client = await AdminClientAsync();
-        UserResponse? admin = null;
+        var everyone = await AllUsersAsync(client);
 
-        for (var page = 1; admin is null; page++)
-        {
-            var response = await client.GetAsync($"/users?page={page}&pageSize=100");
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = (await response.Content.ReadFromJsonAsync<PagedResponse<UserResponse>>())!;
-            admin = body.Items.SingleOrDefault(u => u.Email == ApiFactory.AdminEmail);
-            if (body.Items.Count == 0)
-            {
-                break;
-            }
-        }
-
-        Assert.NotNull(admin);
+        var admin = Assert.Single(everyone, u => u.Email == ApiFactory.AdminEmail);
         Assert.Equal([Roles.Admin], admin.Roles);
     }
 
     [Fact]
     public async Task Users_list_respects_page_size_and_reports_total()
     {
-        await UserClientAsync();
-        await UserClientAsync();
+        // The database is shared with the other tests, so compare against the total before adding users.
+        // The "api" collection runs its tests one at a time, which makes the difference exact.
         var client = await AdminClientAsync();
+        var totalBefore = await TotalUsersAsync(client);
+        await UserClientAsync();
+        await UserClientAsync();
 
         var response = await client.GetAsync("/users?page=1&pageSize=2");
 
@@ -102,7 +93,37 @@ public class RolesTests(ApiFactory factory)
         Assert.Equal(2, body.Items.Count);
         Assert.Equal(1, body.Page);
         Assert.Equal(2, body.PageSize);
-        Assert.True(body.TotalCount >= 3);
+        Assert.Equal(totalBefore + 2, body.TotalCount);
+    }
+
+    private static async Task<List<UserResponse>> AllUsersAsync(HttpClient admin)
+    {
+        const int pageSize = 100;
+        var all = new List<UserResponse>();
+        var totalCount = 0;
+        var page = 1;
+        do
+        {
+            var body = await PageAsync(admin, page, pageSize);
+            all.AddRange(body.Items);
+            totalCount = body.TotalCount;
+            page++;
+        }
+        while (all.Count < totalCount);
+        return all;
+    }
+
+    private static async Task<PagedResponse<UserResponse>> PageAsync(HttpClient admin, int page, int pageSize)
+    {
+        var response = await admin.GetAsync($"/users?page={page}&pageSize={pageSize}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<PagedResponse<UserResponse>>())!;
+    }
+
+    private static async Task<int> TotalUsersAsync(HttpClient admin)
+    {
+        var response = await admin.GetAsync("/users?page=1&pageSize=1");
+        return (await response.Content.ReadFromJsonAsync<PagedResponse<UserResponse>>())!.TotalCount;
     }
 
     [Theory]
@@ -197,5 +218,51 @@ public class RolesTests(ApiFactory factory)
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => DbSeeder.SeedAsync(factory.Services, config));
 
         Assert.DoesNotContain(weakPassword, error.Message);
+    }
+
+    [Theory]
+    [InlineData("Admin:Email", "only-email@x.com")]
+    [InlineData("Admin:Password", "Passw0rd!xyz")]
+    public async Task Seeding_creates_no_admin_when_only_the_email_or_only_the_password_is_configured(string key, string value)
+    {
+        var before = await CountUsersAsync();
+
+        await DbSeeder.SeedAsync(factory.Services, Config((key, value)));
+
+        Assert.Equal(before, await CountUsersAsync());
+    }
+
+    [Fact]
+    public async Task Seeding_keeps_the_current_password_of_an_existing_admin_when_the_configured_one_changes()
+    {
+        const string otherPassword = "Other!Passw0rd99";
+        var changed = Config(("Admin:Email", ApiFactory.AdminEmail), ("Admin:Password", otherPassword));
+
+        await DbSeeder.SeedAsync(factory.Services, changed);
+
+        var original = await factory.CreateClient().PostAsJsonAsync(
+            "/auth/login", new LoginRequest(ApiFactory.AdminEmail, ApiFactory.AdminPassword));
+        var replaced = await factory.CreateClient().PostAsJsonAsync(
+            "/auth/login", new LoginRequest(ApiFactory.AdminEmail, otherPassword));
+        Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, replaced.StatusCode);
+    }
+
+    [Fact]
+    public async Task Users_list_pages_do_not_overlap_and_follow_email_order()
+    {
+        await UserClientAsync();
+        await UserClientAsync();
+        await UserClientAsync();
+        var client = await AdminClientAsync();
+
+        var first = await PageAsync(client, 1, 2);
+        var second = await PageAsync(client, 2, 2);
+
+        Assert.Equal(2, first.Items.Count);
+        Assert.NotEmpty(second.Items);
+        Assert.Empty(first.Items.Select(u => u.Id).Intersect(second.Items.Select(u => u.Id)));
+        var emails = first.Items.Concat(second.Items).Select(u => u.Email.ToUpperInvariant()).ToList();
+        Assert.Equal(emails.OrderBy(e => e, StringComparer.Ordinal).ToList(), emails);
     }
 }

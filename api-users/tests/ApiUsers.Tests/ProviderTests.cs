@@ -9,10 +9,22 @@ public class ProviderTests(ApiFactory factory)
     [Fact]
     public void Startup_fails_with_unknown_provider()
     {
-        var misconfigured = factory.WithWebHostBuilder(builder =>
+        using var misconfigured = factory.WithWebHostBuilder(builder =>
             builder.UseSetting("Database:Provider", "Oracle"));
 
-        Assert.ThrowsAny<Exception>(() => misconfigured.CreateClient());
+        StartupAssert.FailsOptionsValidation(() => misconfigured.CreateClient(), "Database:Provider");
+    }
+
+    [Fact]
+    public void Startup_assertion_rejects_a_failure_that_is_not_options_validation()
+    {
+        // An empty connection string also stops the application, but not through options validation.
+        using var unrelated = factory.WithWebHostBuilder(builder => builder.UseSetting("ConnectionStrings:Default", ""));
+
+        var rejected = Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+            StartupAssert.FailsOptionsValidation(() => unrelated.CreateClient(), "Jwt:Issuer"));
+
+        Assert.Contains("Expected OptionsValidationException", rejected.Message);
     }
 
     [Fact]

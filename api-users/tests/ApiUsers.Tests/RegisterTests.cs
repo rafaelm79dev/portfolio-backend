@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using ApiUsers.Application.Auth;
+using static ApiUsers.Tests.TestHelpers;
 
 namespace ApiUsers.Tests;
 
@@ -10,8 +11,6 @@ namespace ApiUsers.Tests;
 public class RegisterTests(ApiFactory factory)
 {
     private const string ValidPassword = "Passw0rd!x";
-
-    private static string NewEmail() => $"{Guid.NewGuid():N}@x.com";
 
     private Task<HttpResponseMessage> RegisterAsync(string? email, string? password) =>
         factory.CreateClient().PostAsJsonAsync("/auth/register", new RegisterRequest(email, password));

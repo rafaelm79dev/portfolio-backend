@@ -18,6 +18,8 @@ public sealed class RefreshTokenRepository(AppDbContext db) : IRefreshTokenRepos
 
     public async Task<bool> TryRotateAsync(string currentHash, RefreshToken replacement, DateTime nowUtc, CancellationToken ct)
     {
+        // Manual transaction. If EnableRetryOnFailure is ever turned on, this whole method must run inside
+        // db.Database.CreateExecutionStrategy().ExecuteAsync(...), or EF throws at runtime.
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         // One conditional UPDATE decides the winner: a concurrent caller blocks on the row and then sees it revoked.

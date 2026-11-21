@@ -6,7 +6,7 @@
 |---|---|
 | **Qué hace** | Registra usuarios, les permite iniciar sesión y devuelve tokens JWT. También renueva y cierra sesiones, y tiene un endpoint de administración. |
 | **Cómo está armado** | .NET 10 con Minimal APIs y Clean Architecture en 4 proyectos: `Domain`, `Application`, `Infrastructure` y `Api`. |
-| **Qué implementa** | Login con JWT (15 min) y refresh token de un solo uso (7 días) con detección de robo · roles `User` y `Admin` · bloqueo de cuenta tras 5 intentos fallidos · listado paginado de usuarios · límite de peticiones en `/auth` · documentación con OpenAPI/Scalar · 106 tests de integración. |
+| **Qué implementa** | Login con JWT (15 min) y refresh token de un solo uso (7 días) con detección de robo · roles `User` y `Admin` · bloqueo de cuenta tras 5 intentos fallidos · listado paginado de usuarios · límite de peticiones en `/auth` · documentación con OpenAPI/Scalar · 129 tests (de integración, unitarios y de arquitectura). |
 | **Base de datos** | **SQL Server** o **PostgreSQL** (incluye Supabase), según `Database:Provider`. |
 | **Cómo probarlo** | Necesitas .NET 10 y Docker. Sigue la sección [Puesta en marcha](#puesta-en-marcha-con-sql-server): son cuatro pasos. |
 
@@ -192,6 +192,36 @@ Database__Provider=PostgreSql ConnectionStrings__Default="Host=localhost;Databas
   dotnet ef migrations add <Nombre> -p src/ApiUsers.Migrations.PostgreSql -s src/ApiUsers.Api -o Migrations
 ```
 
+## Análisis realizados
+
+Esto es lo que se ejecutó sobre el código (noviembre de 2026), para que sirva de referencia de hasta dónde llega la verificación.
+
+| Análisis | Cómo se hizo | Qué cubre |
+|---|---|---|
+| **Pruebas de integración** | La API real con `WebApplicationFactory` y una base de datos en contenedor, con SQL Server y con PostgreSQL | Todos los endpoints, validación de entrada, autenticación y autorización, bloqueo de cuentas, sembrado, OpenAPI y arranque con configuración inválida |
+| **Pruebas unitarias** | Reglas del dominio y casos de uso de `AuthService` con repositorio e identidad falsos, sin base de datos | Cada rama del refresh y del logout, incluidas las que una carrera real no permite forzar |
+| **Pruebas de arquitectura** | Comprobación de las referencias entre ensamblados | Que `Domain` no dependa de nada, que `Application` solo dependa de `Domain` e `Infrastructure` no conozca a `Api` ni a las migraciones |
+| **Desarrollo guiado por pruebas** | Cada comportamiento nuevo empezó con un test visto fallar por la razón esperada | Que los tests detecten de verdad el comportamiento que dicen probar |
+| **Concurrencia** | Peticiones simultáneas con el mismo refresh token y con el mismo email, repetidas varias veces en ambos motores | La rotación atómica de tokens y el registro duplicado simultáneo (que dio un 500 y se corrigió) |
+| **Revisión de mutaciones, a mano** | Se listaron cambios pequeños en el código que ningún test habría detectado (quitar un filtro, cambiar `<` por `<=`...) y se añadió un test para cada uno | La calidad de la propia suite, no solo del código |
+| **Revisión de seguridad** | Revisión estática de autenticación, JWT, sesiones, exposición y configuración, antes de cada commit y en rondas posteriores | Falsificación de tokens (`alg: none`, otra clave, payload alterado), robo de refresh tokens, enumeración de usuarios, tiempos de respuesta, escalada a `Admin`, fuerza bruta |
+| **Revisión de código y de rendimiento** | Revisión estática antes de cada commit | Índices, ausencia de consultas N+1, paginación acotada, separación por capas |
+| **Revisiones independientes** | Varias rondas externas sobre el código y las pruebas | Los hallazgos se aplicaron o se documentaron en las limitaciones de abajo |
+| **Dependencias** | `dotnet list package --vulnerable --include-transitive` | Sin paquetes con vulnerabilidades conocidas en el momento de la comprobación |
+| **Compilación estricta** | `dotnet build -warnaserror` | Cero advertencias |
+| **Verificación manual de punta a punta** | Recorrido completo con `curl` contra SQL Server en Docker | Registro, login, refresh, reutilización de un token, logout, rol de administrador y documentación |
+
+Para repetir las comprobaciones automáticas, desde `api-users`:
+
+```bash
+dotnet test
+TEST_DB_PROVIDER=PostgreSql dotnet test
+dotnet build -warnaserror
+dotnet list package --vulnerable --include-transitive
+```
+
+**Lo que no se ha hecho:** pruebas de penetración, pruebas de carga con mediciones de rendimiento, medición de cobertura de código, análisis con un escáner de seguridad automatizado (estático o dinámico) ni revisión de la infraestructura donde se despliegue. Las revisiones de seguridad y de rendimiento fueron estáticas.
+
 ## Limitaciones conocidas
 
 Cosas que esta API no hace y que conviene resolver antes de exponerla a usuarios reales:
@@ -199,7 +229,10 @@ Cosas que esta API no hace y que conviene resolver antes de exponerla a usuarios
 - **Sin confirmación de email.** Cualquiera puede registrar un email ajeno. Hace falta un servicio de envío de correos y exigir `EmailConfirmed` en el login.
 - **El `409` del registro revela que un email ya existe.** Es inherente a responder con un conflicto; el login sí devuelve siempre el mismo `401`.
 - **El límite de peticiones vive en memoria y es por instancia.** Con varias réplicas, cada una cuenta por su lado; un límite global necesitaría un almacén compartido, como Redis.
-- **Los refresh tokens vencidos o revocados no se purgan,** así que la tabla crece. Se resuelve con una tarea periódica de limpieza.
+- **El sembrado no es atómico.** `DbSeeder` comprueba y luego crea: dos instancias arrancando a la vez con `MigrateOnStartup` pueden competir y una fallar por duplicado. Arrancar una sola instancia para sembrar lo evita.
+- **`TokenHash` usa `nvarchar(64)`,** y su comparación depende de la colación (insensible a mayúsculas en SQL Server, sensible en PostgreSQL). No hay riesgo práctico por los 256 bits aleatorios del token; un `varchar(44)` con colación binaria sería más exacto.
+- **`TryRotateAsync` usa una transacción manual.** Si algún día se activa `EnableRetryOnFailure`, hay que envolverla en `CreateExecutionStrategy().ExecuteAsync(...)`.
+- **Los refresh tokens vencidos o revocados no se purgan,** así que la tabla crece. Se resuelve con una tarea periódica de limpieza. Esa limpieza debe filtrar por `ExpiresAtUtc` y no por `RevokedAtUtc`: la detección de reutilización necesita conservar las filas revocadas hasta su vencimiento original. Un índice en `ExpiresAtUtc` solo haría falta si el borrado resulta lento.
 - **Una sola clave de firma.** Rotarla invalida los access tokens vigentes; para rotarla sin cortes haría falta un `kid` y una ventana con dos claves.
 - **Los cambios de rol o el borrado de una cuenta tardan hasta 15 minutos** en reflejarse en los endpoints que solo leen el token. `GET /users`, `GET /users/me` y el refresh sí consultan la base.
 

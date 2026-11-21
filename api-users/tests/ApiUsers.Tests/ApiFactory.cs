@@ -17,6 +17,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const string SigningKey = "test-signing-key-test-signing-key-0123456789";
     public const string Issuer = "api-users-tests";
     public const string Audience = "api-users-tests-clients";
+    public const int AccessTokenMinutes = 15;
+    public const int RefreshTokenDays = 7;
 
     /// <summary>Database engine under test: "SqlServer" (default) or "PostgreSql", from TEST_DB_PROVIDER.</summary>
     public static string Provider { get; } = Environment.GetEnvironmentVariable("TEST_DB_PROVIDER") ?? "SqlServer";
@@ -63,6 +65,9 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:SigningKey", SigningKey);
         builder.UseSetting("Jwt:Issuer", Issuer);
         builder.UseSetting("Jwt:Audience", Audience);
+        // Pinned here so the tests do not depend on the defaults in appsettings.json.
+        builder.UseSetting("Jwt:AccessTokenMinutes", AccessTokenMinutes.ToString());
+        builder.UseSetting("Jwt:RefreshTokenDays", RefreshTokenDays.ToString());
         builder.UseSetting("Admin:Email", AdminEmail);
         builder.UseSetting("Admin:Password", AdminPassword);
         builder.UseSetting("Database:MigrateOnStartup", "true");

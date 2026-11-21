@@ -22,8 +22,8 @@ public class ArchitectureTests
     {
         var references = ReferencedNames(typeof(AuthService));
 
-        Assert.DoesNotContain(references, n => n.StartsWith("ApiUsers.Infrastructure"));
-        Assert.DoesNotContain(references, n => n.StartsWith("ApiUsers.Api"));
+        // Besides the framework, Application may only reference Domain.
+        Assert.All(references.Where(n => n.StartsWith("ApiUsers.")), n => Assert.Equal("ApiUsers.Domain", n));
     }
 
     [Fact]

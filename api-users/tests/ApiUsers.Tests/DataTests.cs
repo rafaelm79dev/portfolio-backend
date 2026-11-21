@@ -9,12 +9,10 @@ namespace ApiUsers.Tests;
 [Collection("api")]
 public class DataTests(ApiFactory factory)
 {
-    private static string NewEmail() => $"{Guid.NewGuid():N}@x.com";
-
     private async Task<AppUser> CreateUserAsync(IServiceScope scope)
     {
         var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-        var email = NewEmail();
+        var email = TestHelpers.NewEmail();
         var user = new AppUser { UserName = email, Email = email };
         var result = await users.CreateAsync(user, "Passw0rd!x");
         Assert.True(result.Succeeded, string.Join(", ", result.Errors.Select(e => e.Description)));

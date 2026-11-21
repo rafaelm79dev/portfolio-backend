@@ -11,7 +11,8 @@ public class OpenApiTests(ApiFactory factory)
     {
         var response = await factory.CreateClient().GetAsync("/openapi/v1.json");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.Clone();
     }
 
     [Theory]
@@ -65,7 +66,7 @@ public class OpenApiTests(ApiFactory factory)
     [InlineData("/scalar/v1")]
     public async Task Api_documentation_is_not_served_in_production(string path)
     {
-        var production = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
+        using var production = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
 
         var response = await production.CreateClient().GetAsync(path);
 

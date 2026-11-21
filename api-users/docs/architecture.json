@@ -127,9 +127,9 @@
   ],
   "tests": {
     "path": "tests/ApiUsers.Tests",
-    "files": ["ArchitectureTests", "DataTests", "DomainTests", "ForwardedHeadersTests", "HardeningTests", "JwtOptionsTests", "LoginTests", "MeTests", "OpenApiTests", "ProviderTests", "RefreshTests", "RegisterTests", "RolesTests", "SmokeTests"],
-    "helpers": ["ApiFactory (container per engine, rate limit set high)", "TestHelpers"],
-    "count": "106 tests; run with `dotnet test` and `TEST_DB_PROVIDER=PostgreSql dotnet test`"
+    "files": ["ArchitectureTests", "AuthServiceTests (unit, fakes)", "DataTests", "DomainTests", "ForwardedHeadersTests", "HardeningTests", "JwtOptionsTests", "LoginTests", "MeTests", "OpenApiTests", "ProviderTests", "RefreshTests", "RefreshTokenRepositoryTests", "RegisterTests", "RolesTests", "SmokeTests"],
+    "helpers": ["ApiFactory (container per engine, rate limit and token lifetimes pinned)", "TestHelpers", "StartupAssert (startup must fail with OptionsValidationException naming the key)"],
+    "count": "129 tests (integration, unit, architecture); run with `dotnet test` and `TEST_DB_PROVIDER=PostgreSql dotnet test`"
   },
   "howToAddAFeature": [
     "1. Domain: add entity/rule only if it has behavior independent of storage.",

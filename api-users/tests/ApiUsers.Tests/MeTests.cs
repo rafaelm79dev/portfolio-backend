@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json.Nodes;
 using ApiUsers.Application.Auth;
 using ApiUsers.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
@@ -105,9 +106,18 @@ public class MeTests(ApiFactory factory)
         await TestHelpers.RegisterAsync(factory.CreateClient(), email);
         var tokens = await TestHelpers.LoginAsync(factory.CreateClient(), email);
         var parts = tokens.AccessToken.Split('.');
-        var payload = parts[1].ToCharArray();
-        payload[10] = payload[10] == 'A' ? 'B' : 'A';
-        var tampered = $"{parts[0]}.{new string(payload)}.{parts[2]}";
+
+        // Change a claim inside a still-valid payload (privilege escalation) and keep the original signature.
+        // Flipping a random character could leave invalid JSON, and a 401 for a parsing error would prove nothing.
+        var payload = JsonNode.Parse(Base64UrlEncoder.Decode(parts[1]))!.AsObject();
+        payload["role"] = new JsonArray("Admin");
+        var tampered = $"{parts[0]}.{Base64UrlEncoder.Encode(payload.ToJsonString())}.{parts[2]}";
+
+        // The untouched token works and the tampered one is well formed, so only the signature can explain a 401.
+        Assert.Equal(HttpStatusCode.OK, (await ClientWithToken(tokens.AccessToken).GetAsync("/users/me")).StatusCode);
+        var handler = new JsonWebTokenHandler();
+        Assert.True(handler.CanReadToken(tampered));
+        Assert.Equal("Admin", handler.ReadJsonWebToken(tampered).GetClaim("role").Value);
 
         var response = await ClientWithToken(tampered).GetAsync("/users/me");
 

@@ -52,4 +52,13 @@ public class DomainTests
 
         Assert.Equal(Now, token.RevokedAtUtc);
     }
+
+    [Fact]
+    public void RefreshToken_is_not_active_at_the_exact_expiry_instant()
+    {
+        var token = NewToken(Now);
+
+        Assert.False(token.IsActive(Now));
+        Assert.True(token.IsActive(Now.AddTicks(-1)));
+    }
 }

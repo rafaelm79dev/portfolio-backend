@@ -57,7 +57,8 @@ public class ForwardedHeadersTests(ApiFactory factory)
     [Fact]
     public async Task Each_forwarded_client_ip_gets_its_own_rate_limit_quota_behind_a_trusted_proxy()
     {
-        var client = HostBehind(ProxyIp, b => TrustProxyAndLimitTo(b, permits: 2)).CreateClient();
+        using var host = HostBehind(ProxyIp, b => TrustProxyAndLimitTo(b, permits: 2));
+        var client = host.CreateClient();
 
         var firstClient = new List<HttpStatusCode>
         {
@@ -74,7 +75,8 @@ public class ForwardedHeadersTests(ApiFactory factory)
     [Fact]
     public async Task Forwarded_headers_are_ignored_by_default()
     {
-        var client = HostBehind(ProxyIp, b => b.UseSetting("RateLimiting:AuthPermitLimit", "2")).CreateClient();
+        using var host = HostBehind(ProxyIp, b => b.UseSetting("RateLimiting:AuthPermitLimit", "2"));
+        var client = host.CreateClient();
 
         var statuses = new[]
         {
@@ -89,7 +91,8 @@ public class ForwardedHeadersTests(ApiFactory factory)
     [Fact]
     public async Task A_peer_that_is_not_a_known_proxy_cannot_spoof_the_client_ip()
     {
-        var client = HostBehind("10.0.0.99", b => TrustProxyAndLimitTo(b, permits: 2)).CreateClient();
+        using var host = HostBehind("10.0.0.99", b => TrustProxyAndLimitTo(b, permits: 2));
+        var client = host.CreateClient();
 
         var statuses = new[]
         {
@@ -104,7 +107,7 @@ public class ForwardedHeadersTests(ApiFactory factory)
     [Fact]
     public async Task Https_redirect_does_not_loop_when_the_trusted_proxy_forwards_https()
     {
-        var host = HostBehind(ProxyIp, b =>
+        using var host = HostBehind(ProxyIp, b =>
         {
             TrustProxyAndLimitTo(b, permits: 100);
             b.UseEnvironment("Production").UseSetting("HTTPS_PORT", "443");
@@ -124,9 +127,10 @@ public class ForwardedHeadersTests(ApiFactory factory)
     public void Startup_fails_when_forwarding_is_enabled_without_any_known_proxy()
     {
         // With empty lists the framework would trust every client: refuse to start instead.
-        var misconfigured = factory.WithWebHostBuilder(b => b.UseSetting("ForwardedHeaders:Enabled", "true"));
+        using var misconfigured = factory.WithWebHostBuilder(b => b.UseSetting("ForwardedHeaders:Enabled", "true"));
 
-        Assert.ThrowsAny<Exception>(() => misconfigured.CreateClient());
+        StartupAssert.FailsOptionsValidation(() => misconfigured.CreateClient(),
+            "ForwardedHeaders:Enabled requires at least one entry in KnownProxies or KnownNetworks");
     }
 
     [Theory]
@@ -134,10 +138,12 @@ public class ForwardedHeadersTests(ApiFactory factory)
     [InlineData("ForwardedHeaders:KnownNetworks:0", "not-a-cidr")]
     public void Startup_fails_when_a_proxy_or_network_is_not_valid(string key, string value)
     {
-        var misconfigured = factory.WithWebHostBuilder(b => b
+        using var misconfigured = factory.WithWebHostBuilder(b => b
             .UseSetting("ForwardedHeaders:Enabled", "true")
             .UseSetting(key, value));
 
-        Assert.ThrowsAny<Exception>(() => misconfigured.CreateClient());
+        // The message names the list ("ForwardedHeaders:KnownProxies"), not the entry index.
+        var listKey = key[..key.LastIndexOf(':')];
+        StartupAssert.FailsOptionsValidation(() => misconfigured.CreateClient(), listKey);
     }
 }
