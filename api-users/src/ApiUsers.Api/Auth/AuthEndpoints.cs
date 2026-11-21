@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using ApiUsers.Application.Auth;
 
 namespace ApiUsers.Api.Auth;
@@ -7,14 +8,57 @@ public static class AuthEndpoints
 {
     private const int MaxEmailLength = 256;    // matches the Identity column size
     private const int MaxPasswordLength = 128; // avoids hashing arbitrarily large inputs
+    private const int MaxRefreshTokenLength = 512; // real tokens are 43 characters
 
     public static RouteGroupBuilder MapAuth(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/auth").WithTags("Auth");
         group.MapPost("/register", RegisterAsync);
         group.MapPost("/login", LoginAsync);
+        group.MapPost("/refresh", RefreshAsync);
+        group.MapPost("/logout", LogoutAsync).RequireAuthorization();
         return group;
     }
+
+    private static async Task<IResult> RefreshAsync(RefreshRequest? request, AuthService auth, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request?.RefreshToken))
+        {
+            return MissingRefreshToken();
+        }
+        if (request.RefreshToken.Length > MaxRefreshTokenLength)
+        {
+            return InvalidRefreshToken(); // no real token is this long: do not even look it up
+        }
+
+        var tokens = await auth.RefreshAsync(request.RefreshToken, ct);
+        return tokens is null ? InvalidRefreshToken() : Results.Ok(tokens);
+    }
+
+    private static async Task<IResult> LogoutAsync(
+        RefreshRequest? request, ClaimsPrincipal principal, AuthService auth, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request?.RefreshToken))
+        {
+            return MissingRefreshToken();
+        }
+        if (!Guid.TryParse(principal.FindFirstValue("sub"), out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        if (request.RefreshToken.Length <= MaxRefreshTokenLength)
+        {
+            await auth.LogoutAsync(userId, request.RefreshToken, ct);
+        }
+        return Results.NoContent();
+    }
+
+    private static IResult MissingRefreshToken() =>
+        Results.ValidationProblem(new Dictionary<string, string[]> { ["RefreshToken"] = ["Refresh token is required."] });
+
+    private static IResult InvalidRefreshToken() =>
+        Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Unauthorized", detail: "Invalid refresh token.");
 
     private static async Task<IResult> LoginAsync(LoginRequest? request, AuthService auth, CancellationToken ct)
     {
