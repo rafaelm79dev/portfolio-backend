@@ -159,6 +159,36 @@ public class RolesTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Seeding_does_not_promote_existing_account_with_a_different_password()
+    {
+        var email = TestHelpers.NewEmail();
+        await TestHelpers.RegisterAsync(factory.CreateClient(), email); // registered by someone else, own password
+        var config = Config(("Admin:Email", email), ("Admin:Password", "An0ther!Passw0rd"));
+
+        await DbSeeder.SeedAsync(factory.Services, config); // must neither throw nor promote
+
+        using var scope = factory.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = await users.FindByEmailAsync(email);
+        Assert.False(await users.IsInRoleAsync(user!, Roles.Admin));
+    }
+
+    [Fact]
+    public async Task Seeding_promotes_existing_account_when_the_configured_password_matches()
+    {
+        var email = TestHelpers.NewEmail();
+        await TestHelpers.RegisterAsync(factory.CreateClient(), email);
+        var config = Config(("Admin:Email", email), ("Admin:Password", TestHelpers.Password));
+
+        await DbSeeder.SeedAsync(factory.Services, config);
+
+        using var scope = factory.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = await users.FindByEmailAsync(email);
+        Assert.True(await users.IsInRoleAsync(user!, Roles.Admin));
+    }
+
+    [Fact]
     public async Task Seeding_with_weak_admin_password_fails_without_leaking_it()
     {
         const string weakPassword = "zzq";
