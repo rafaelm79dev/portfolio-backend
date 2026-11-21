@@ -33,4 +33,12 @@ public class ArchitectureTests
 
         Assert.DoesNotContain(references, n => n.StartsWith("ApiUsers.Api"));
     }
+
+    [Fact]
+    public void Infrastructure_does_not_depend_on_migrations()
+    {
+        var references = ReferencedNames(typeof(AppDbContext));
+
+        Assert.DoesNotContain(references, n => n.StartsWith("ApiUsers.Migrations"));
+    }
 }

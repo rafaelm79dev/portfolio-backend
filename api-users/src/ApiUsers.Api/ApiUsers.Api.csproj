@@ -17,6 +17,8 @@
   <ItemGroup>
     <ProjectReference Include="..\ApiUsers.Application\ApiUsers.Application.csproj" />
     <ProjectReference Include="..\ApiUsers.Infrastructure\ApiUsers.Infrastructure.csproj" />
+    <ProjectReference Include="..\ApiUsers.Migrations.SqlServer\ApiUsers.Migrations.SqlServer.csproj" />
+    <ProjectReference Include="..\ApiUsers.Migrations.PostgreSql\ApiUsers.Migrations.PostgreSql.csproj" />
   </ItemGroup>
 
 </Project>
