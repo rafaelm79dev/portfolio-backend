@@ -30,11 +30,31 @@ API REST en .NET 10 para registrar usuarios y autenticarlos con JWT. Incluye ref
 
 Clean Architecture en cuatro proyectos, con las dependencias apuntando hacia adentro:
 
-```
-Api ──► Application ──► Domain
- │           ▲
- └─► Infrastructure
- └─► Migrations.SqlServer / Migrations.PostgreSql ──► Infrastructure
+```mermaid
+flowchart TD
+    Api["<b>Api</b><br/>Endpoints, JWT, OpenAPI"]
+    Mig["<b>Migrations.SqlServer / .PostgreSql</b><br/>Un juego por motor"]
+    Infra["<b>Infrastructure</b><br/>EF Core, Identity, JWT, repositorios"]
+    App["<b>Application</b><br/>Casos de uso y puertos"]
+    Dom["<b>Domain</b><br/>RefreshToken, Roles"]
+
+    Api --> App
+    Api --> Infra
+    Api --> Mig
+    Mig --> Infra
+    Infra -->|implementa los puertos| App
+    App --> Dom
+
+    classDef api fill:#dbeafe,stroke:#3b82f6,color:#1d2733
+    classDef app fill:#dcfce7,stroke:#22c55e,color:#1d2733
+    classDef dom fill:#fef3c7,stroke:#f59e0b,color:#1d2733
+    classDef inf fill:#fce7f3,stroke:#ec4899,color:#1d2733
+    classDef mig fill:#ede9fe,stroke:#8b5cf6,color:#1d2733
+    class Api api
+    class App app
+    class Dom dom
+    class Infra inf
+    class Mig mig
 ```
 
 | Proyecto | Responsabilidad |
@@ -46,6 +66,29 @@ Api ──► Application ──► Domain
 | `ApiUsers.Api` | Endpoints (Minimal APIs), autenticación JWT y OpenAPI. Solo traduce HTTP. |
 
 `Application` no conoce `UserManager` ni EF Core, e `Infrastructure` no conoce a `Api` ni a los proyectos de migraciones. Unos tests de arquitectura lo verifican.
+
+### Flujo de refresh
+
+Es la parte más delicada del diseño: cada refresh token se usa una sola vez y reutilizar uno ya consumido se trata como un robo.
+
+```mermaid
+flowchart TD
+    Start(["POST /auth/refresh"]) --> Hash["Calcular SHA-256 del token y buscarlo"]
+    Hash --> Exists{"¿Existe?"}
+    Exists -- No --> R401["401"]
+    Exists -- Sí --> Revoked{"¿Ya revocado?"}
+    Revoked -- Sí --> Family["Revocar toda la familia (posible robo)"]
+    Family --> R401
+    Revoked -- No --> Expired{"¿Expirado?"}
+    Expired -- Sí --> R401
+    Expired -- No --> Account{"¿Cuenta bloqueada o borrada?"}
+    Account -- Sí --> R401
+    Account -- No --> Rotate{"TryRotateAsync atómico<br/>(UPDATE condicional)"}
+    Rotate -- "Pierde la carrera" --> Family
+    Rotate -- Éxito --> Ok["200: nuevo access token (15 min)<br/>+ nuevo refresh (7 días), misma familia"]
+```
+
+Hay un [resumen completo de la arquitectura en HTML](docs/architecture.html) con los endpoints, el modelo de datos y el orden de arranque. GitHub lo muestra como código fuente; para verlo con formato, ábrelo en local.
 
 ## Requisitos
 
