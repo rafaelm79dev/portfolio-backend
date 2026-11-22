@@ -1,132 +1,117 @@
 # api-users
 
-## Resumen rápido
+[Leer en español](README.es.md)
+
+## Quick summary
 
 | | |
 |---|---|
-| **Qué hace** | Registra usuarios, les permite iniciar sesión y devuelve tokens JWT. También renueva y cierra sesiones, y tiene un endpoint de administración. |
-| **Cómo está armado** | .NET 10 con Minimal APIs y Clean Architecture en 4 proyectos: `Domain`, `Application`, `Infrastructure` y `Api`. |
-| **Qué implementa** | Login con JWT (15 min) y refresh token de un solo uso (7 días) con detección de robo · roles `User` y `Admin` · bloqueo de cuenta tras 5 intentos fallidos · listado paginado de usuarios · límite de peticiones en `/auth` · documentación con OpenAPI/Scalar · 129 tests (de integración, unitarios y de arquitectura). |
-| **Base de datos** | **SQL Server** o **PostgreSQL** (incluye Supabase), según `Database:Provider`. |
-| **Cómo probarlo** | Necesitas .NET 10 y Docker. Sigue la sección [Puesta en marcha](#puesta-en-marcha-con-sql-server): son cuatro pasos. |
+| **What it does** | Registers users, lets them sign in and returns JWT tokens. It also renews and closes sessions, and it has an admin endpoint. |
+| **How it is built** | .NET 10 with Minimal APIs and Clean Architecture in 4 projects: `Domain`, `Application`, `Infrastructure` and `Api`. |
+| **What it shows** | Login with JWT (15 min) and a one-use refresh token (7 days) with theft detection · roles `User` and `Admin` · account lockout after 5 failed attempts · paginated user list · rate limit on `/auth` · OpenAPI/Scalar documentation · 129 tests (integration, unit and architecture). |
+| **Database** | **SQL Server** or **PostgreSQL** (Supabase included), chosen with `Database:Provider`. |
+| **How to try it** | You need .NET 10 and Docker. Follow [Run it with SQL Server](#run-it-with-sql-server): it takes four steps. |
 
-A continuación está el detalle completo.
+The full detail is below.
 
 ---
 
-API REST en .NET 10 para registrar usuarios y autenticarlos con JWT. Incluye refresh tokens de un solo uso con detección de reutilización, roles (`User` y `Admin`) y persistencia en **SQL Server** o **PostgreSQL** a elección por configuración (Supabase incluido, porque es PostgreSQL).
+A REST API in .NET 10 to register users and authenticate them with JWT. It includes one-use refresh tokens with reuse detection, roles (`User` and `Admin`) and storage in **SQL Server** or **PostgreSQL**, chosen by configuration (Supabase is included, because it is PostgreSQL).
 
-## Características
+## Features
 
-- Registro, login, renovación de sesión (`refresh`) y cierre de sesión (`logout`).
-- Access token JWT de 15 minutos y refresh token de 7 días.
-- Los refresh tokens se guardan **solo como hash SHA-256**. Cada uno se usa una única vez: al renovarse, el anterior queda invalidado, y si alguien presenta uno ya usado se revoca toda la cadena de sesión (señal de robo). La rotación es atómica, así que dos peticiones simultáneas con el mismo token no pueden tener éxito a la vez.
-- Contraseñas con ASP.NET Core Identity, bloqueo de cuenta tras 5 intentos fallidos (5 minutos) y una única respuesta `401` para email desconocido, contraseña errónea o cuenta bloqueada.
-- Autorización por roles. El administrador inicial se siembra desde la configuración, nunca desde el código.
-- Documentación interactiva con OpenAPI y Scalar (solo en desarrollo).
-- Tests de integración contra una base de datos real en contenedor, ejecutables con ambos motores.
+- Register, login, session renewal (`refresh`) and session close (`logout`).
+- JWT access token of 15 minutes and refresh token of 7 days.
+- Refresh tokens are stored **only as a SHA-256 hash**. Each one can be used only once: when it is renewed, the old one becomes invalid. If someone sends a token that was already used, the whole session chain is revoked (a sign of theft). The rotation is atomic, so two requests at the same time with the same token cannot both succeed.
+- Passwords with ASP.NET Core Identity, account lockout after 5 failed attempts (5 minutes) and one single `401` answer for an unknown email, a wrong password or a locked account.
+- Role-based authorization. The first admin is created from the configuration, never from the code.
+- Interactive documentation with OpenAPI and Scalar (development only).
+- Integration tests against a real database in a container, which can run with both database engines.
 
-## Arquitectura
+## Architecture
 
-Clean Architecture en cuatro proyectos, con las dependencias apuntando hacia adentro:
+Clean Architecture in four projects, with the dependencies pointing inwards:
 
 ```mermaid
 flowchart TD
-    Api["<b>Api</b><br/>Endpoints, JWT, OpenAPI"]
-    Mig["<b>Migrations.SqlServer / .PostgreSql</b><br/>Un juego por motor"]
-    Infra["<b>Infrastructure</b><br/>EF Core, Identity, JWT, repositorios"]
-    App["<b>Application</b><br/>Casos de uso y puertos"]
-    Dom["<b>Domain</b><br/>RefreshToken, Roles"]
+    Api["Api<br/>endpoints and JWT"]
+    Infra["Infrastructure<br/>database, Identity, tokens"]
+    Mig["Migrations<br/>one set per database engine"]
+    App["Application<br/>use cases and ports"]
+    Dom["Domain<br/>RefreshToken and Roles"]
 
     Api --> App
     Api --> Infra
     Api --> Mig
     Mig --> Infra
-    Infra -->|implementa los puertos| App
+    Infra -->|implements the ports| App
     App --> Dom
-
-    classDef api fill:#dbeafe,stroke:#3b82f6,color:#1d2733
-    classDef app fill:#dcfce7,stroke:#22c55e,color:#1d2733
-    classDef dom fill:#fef3c7,stroke:#f59e0b,color:#1d2733
-    classDef inf fill:#fce7f3,stroke:#ec4899,color:#1d2733
-    classDef mig fill:#ede9fe,stroke:#8b5cf6,color:#1d2733
-    class Api api
-    class App app
-    class Dom dom
-    class Infra inf
-    class Mig mig
 ```
 
-| Proyecto | Responsabilidad |
+| Project | Responsibility |
 |---|---|
-| `ApiUsers.Domain` | Entidad `RefreshToken` con sus reglas (`IsActive`, `Revoke`) y `Roles`. Sin dependencias. |
-| `ApiUsers.Application` | Casos de uso (`AuthService`, `UserService`), DTOs y los puertos (`IIdentityService`, `ITokenGenerator`, `IRefreshTokenRepository`). |
-| `ApiUsers.Infrastructure` | EF Core, ASP.NET Core Identity, generación de JWT, repositorio de tokens y sembrado. Implementa los puertos. |
-| `ApiUsers.Migrations.SqlServer` / `.PostgreSql` | Migraciones de EF Core, un juego por motor porque el SQL difiere. |
-| `ApiUsers.Api` | Endpoints (Minimal APIs), autenticación JWT y OpenAPI. Solo traduce HTTP. |
+| `ApiUsers.Domain` | The `RefreshToken` entity with its rules (`IsActive`, `Revoke`) and `Roles`. No dependencies. |
+| `ApiUsers.Application` | Use cases (`AuthService`, `UserService`), DTOs and the ports (`IIdentityService`, `ITokenGenerator`, `IRefreshTokenRepository`). |
+| `ApiUsers.Infrastructure` | EF Core, ASP.NET Core Identity, JWT generation, the token repository and seeding. It implements the ports. |
+| `ApiUsers.Migrations.SqlServer` / `.PostgreSql` | EF Core migrations, one set per database engine because the SQL is different. |
+| `ApiUsers.Api` | Endpoints (Minimal APIs), JWT authentication and OpenAPI. It only translates HTTP. |
 
-`Application` no conoce `UserManager` ni EF Core, e `Infrastructure` no conoce a `Api` ni a los proyectos de migraciones. Unos tests de arquitectura lo verifican.
+`Application` does not know `UserManager` or EF Core, and `Infrastructure` does not know `Api` or the migration projects. Architecture tests check this.
 
-### Flujo de refresh
+### Refresh flow
 
-Es la parte más delicada del diseño: cada refresh token se usa una sola vez y reutilizar uno ya consumido se trata como un robo.
+This is the most delicate part of the design: each refresh token is used only once, and using a token that was already used is treated as theft.
 
 ```mermaid
 flowchart TD
-    Start(["POST /auth/refresh"]) --> Hash["Calcular SHA-256 del token y buscarlo"]
-    Hash --> Exists{"¿Existe?"}
-    Exists -- No --> R401["401"]
-    Exists -- Sí --> Revoked{"¿Ya revocado?"}
-    Revoked -- Sí --> Family["Revocar toda la familia (posible robo)"]
+    Start(["POST /auth/refresh"]) --> Check{"Token known, unused,<br/>not expired and account OK?"}
+    Check -- Yes --> Rotate["It is replaced by a new one<br/>(atomic, one use only)"]
+    Rotate --> Ok["200: new access token<br/>and new refresh token"]
+    Check -- "Unknown, expired or account locked" --> R401["401"]
+    Check -- "Already used (possible theft)" --> Family["The whole session chain is revoked"]
+    Rotate -- "Another request arrived first" --> Family
     Family --> R401
-    Revoked -- No --> Expired{"¿Expirado?"}
-    Expired -- Sí --> R401
-    Expired -- No --> Account{"¿Cuenta bloqueada o borrada?"}
-    Account -- Sí --> R401
-    Account -- No --> Rotate{"TryRotateAsync atómico<br/>(UPDATE condicional)"}
-    Rotate -- "Pierde la carrera" --> Family
-    Rotate -- Éxito --> Ok["200: nuevo access token (15 min)<br/>+ nuevo refresh (7 días), misma familia"]
 ```
 
-Hay un [resumen completo de la arquitectura en HTML](docs/architecture.html) con los endpoints, el modelo de datos y el orden de arranque. GitHub lo muestra como código fuente; para verlo con formato, ábrelo en local.
+There is also a [full architecture summary in HTML](docs/architecture.html) (in Spanish) with the endpoints, the data model and the start-up order. GitHub shows HTML files as source code, so open it locally to see it with its layout.
 
-## Requisitos
+## Requirements
 
-- [SDK de .NET 10](https://dotnet.microsoft.com/download)
-- [Docker](https://www.docker.com/) (para la base de datos y para los tests)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Docker](https://www.docker.com/) (for the database and for the tests)
 
-## Puesta en marcha con SQL Server
+## Run it with SQL Server
 
-Desde la carpeta `api-users`:
+From the `api-users` folder:
 
 ```bash
-# 1. Contraseñas de Docker (el archivo .env no se versiona)
-cp .env.example .env          # en Windows: copy .env.example .env
-# edita .env y completa MSSQL_SA_PASSWORD y POSTGRES_PASSWORD
+# 1. Docker passwords (the .env file is not versioned)
+cp .env.example .env          # on Windows: copy .env.example .env
+# edit .env and fill in MSSQL_SA_PASSWORD and POSTGRES_PASSWORD
 
-# 2. Base de datos
+# 2. Database
 docker compose up -d
 
-# 3. Secretos de la API (se guardan fuera del repositorio)
+# 3. API secrets (they are stored outside the repository)
 cd src/ApiUsers.Api
 dotnet user-secrets set "ConnectionStrings:Default" "Server=localhost,1433;Database=ApiUsers;User Id=sa;Password=<MSSQL_SA_PASSWORD>;TrustServerCertificate=True"
-dotnet user-secrets set "Jwt:SigningKey" "<clave aleatoria de al menos 32 caracteres>"
+dotnet user-secrets set "Jwt:SigningKey" "<random key of at least 32 characters>"
 dotnet user-secrets set "Admin:Email" "admin@example.com"
-dotnet user-secrets set "Admin:Password" "<contraseña segura>"
+dotnet user-secrets set "Admin:Password" "<strong password>"
 
-# 4. Ejecutar
+# 4. Run
 dotnet run
 ```
 
-En desarrollo la API aplica las migraciones y siembra los roles y el administrador al arrancar, y abre la documentación en `http://localhost:5299/scalar/v1`.
+In development, the API applies the migrations and creates the roles and the admin when it starts. It also opens the documentation at `http://localhost:5299/scalar/v1`.
 
-Para generar una clave de firma: `openssl rand -base64 48`.
+To generate a signing key: `openssl rand -base64 48`.
 
-## Usar PostgreSQL o Supabase
+## Use PostgreSQL or Supabase
 
-La base de datos se elige con `Database:Provider` (`SqlServer` por defecto o `PostgreSql`). Un valor desconocido impide que la API arranque.
+The database is chosen with `Database:Provider` (`SqlServer` by default, or `PostgreSql`). An unknown value stops the API from starting.
 
-**PostgreSQL local**
+**Local PostgreSQL**
 
 ```bash
 docker compose --profile postgres up -d postgres
@@ -135,64 +120,64 @@ dotnet user-secrets set "Database:Provider" "PostgreSql"
 dotnet user-secrets set "ConnectionStrings:Default" "Host=localhost;Port=5432;Database=apiusers;Username=postgres;Password=<POSTGRES_PASSWORD>"
 ```
 
-**Supabase** (PostgreSQL alojado): usa la cadena de conexión de tu proyecto, con SSL obligatorio:
+**Supabase** (hosted PostgreSQL): use the connection string of your project, with SSL required:
 
 ```bash
 dotnet user-secrets set "Database:Provider" "PostgreSql"
-dotnet user-secrets set "ConnectionStrings:Default" "Host=<host de Supabase>;Port=5432;Database=postgres;Username=<usuario>;Password=<contraseña>;SSL Mode=Require;Trust Server Certificate=true"
+dotnet user-secrets set "ConnectionStrings:Default" "Host=<Supabase host>;Port=5432;Database=postgres;Username=<user>;Password=<password>;SSL Mode=Require;Trust Server Certificate=true"
 ```
 
-El host y el usuario dependen de si usas la conexión directa o el pooler; cópialos desde el panel de Supabase.
+The host and the user depend on whether you use the direct connection or the pooler. Copy them from the Supabase dashboard.
 
-## Configuración
+## Configuration
 
-| Clave | Descripción | Por defecto |
+| Key | Description | Default |
 |---|---|---|
-| `Database:Provider` | `SqlServer` o `PostgreSql` | `SqlServer` |
-| `Database:MigrateOnStartup` | Aplica migraciones y siembra roles/admin al arrancar | `false` (`true` en Development) |
-| `ConnectionStrings:Default` | Cadena de conexión | — (obligatoria) |
-| `Jwt:SigningKey` | Clave HS256, mínimo 32 bytes | — (obligatoria) |
-| `Jwt:Issuer` / `Jwt:Audience` | Emisor y audiencia de los tokens | `api-users` / `api-users-clients` |
-| `Jwt:AccessTokenMinutes` | Vida del access token | `15` |
-| `Jwt:RefreshTokenDays` | Vida del refresh token | `7` |
-| `Admin:Email` / `Admin:Password` | Administrador inicial (se omite si falta alguno) | — |
-| `RateLimiting:AuthPermitLimit` | Peticiones permitidas a `/auth/*` por IP en cada ventana | `20` |
-| `RateLimiting:AuthWindowSeconds` | Duración de la ventana deslizante, en segundos | `60` |
-| `ForwardedHeaders:Enabled` | Confiar en `X-Forwarded-For` y `X-Forwarded-Proto` de los proxies indicados | `false` |
-| `ForwardedHeaders:KnownProxies` | IPs de los proxies inversos de confianza (lista) | — |
-| `ForwardedHeaders:KnownNetworks` | Redes CIDR de proxies de confianza, por ejemplo `10.0.0.0/8` (lista) | — |
+| `Database:Provider` | `SqlServer` or `PostgreSql` | `SqlServer` |
+| `Database:MigrateOnStartup` | Applies migrations and creates roles and admin at start | `false` (`true` in Development) |
+| `ConnectionStrings:Default` | Connection string | — (required) |
+| `Jwt:SigningKey` | HS256 key, at least 32 bytes | — (required) |
+| `Jwt:Issuer` / `Jwt:Audience` | Issuer and audience of the tokens | `api-users` / `api-users-clients` |
+| `Jwt:AccessTokenMinutes` | Life of the access token | `15` |
+| `Jwt:RefreshTokenDays` | Life of the refresh token | `7` |
+| `Admin:Email` / `Admin:Password` | First admin (ignored if one of them is missing) | — |
+| `RateLimiting:AuthPermitLimit` | Requests allowed to `/auth/*` per IP in each window | `20` |
+| `RateLimiting:AuthWindowSeconds` | Length of the sliding window, in seconds | `60` |
+| `ForwardedHeaders:Enabled` | Trust `X-Forwarded-For` and `X-Forwarded-Proto` from the listed proxies | `false` |
+| `ForwardedHeaders:KnownProxies` | IPs of the trusted reverse proxies (list) | — |
+| `ForwardedHeaders:KnownNetworks` | CIDR networks of trusted proxies, for example `10.0.0.0/8` (list) | — |
 
-La API valida `Jwt` y `Database:Provider` al arrancar y falla con un mensaje claro si algo está mal. Las claves obligatorias nunca se guardan en el repositorio: usa `dotnet user-secrets` en desarrollo y variables de entorno (`Jwt__SigningKey`, ...) en otros entornos.
+The API checks `Jwt` and `Database:Provider` when it starts, and it fails with a clear message if something is wrong. The required keys are never saved in the repository: use `dotnet user-secrets` in development and environment variables (`Jwt__SigningKey`, ...) in other environments.
 
-Con `Database:MigrateOnStartup` en `false` la API no toca el esquema: aplica las migraciones y crea los roles por tu cuenta antes de usarla.
+With `Database:MigrateOnStartup` set to `false`, the API does not touch the schema: apply the migrations and create the roles yourself before you use it.
 
-### Seguridad y despliegue
+### Security and deployment
 
-- **Contraseñas:** mínimo 10 caracteres, con mayúscula, minúscula, dígito y símbolo.
-- **Límite de peticiones:** `/auth/*` responde `429` con `Retry-After` al superar el límite por IP, con una ventana deslizante que no deja pasar dos ráfagas completas en el borde de la ventana.
-- **HTTPS:** fuera de Development la API activa HSTS y redirige HTTP a HTTPS.
-- **Detrás de un proxy inverso que termina TLS:** activa `ForwardedHeaders:Enabled` e indica en `KnownProxies` o `KnownNetworks` qué proxies son de confianza. Así la API ve la IP real del cliente (para el límite de peticiones) y el esquema original (para no redirigir en bucle). Está desactivado por defecto a propósito: si se aceptaran esas cabeceras de cualquier cliente, bastaría con falsificar `X-Forwarded-For` para saltarse el límite. Si se activa sin indicar ningún proxy, la API no arranca.
+- **Passwords:** at least 10 characters, with an uppercase letter, a lowercase letter, a digit and a symbol.
+- **Rate limit:** `/auth/*` answers `429` with `Retry-After` when the limit per IP is passed. The sliding window does not let two full bursts through at the edge of the window.
+- **HTTPS:** outside Development, the API turns on HSTS and redirects HTTP to HTTPS.
+- **Behind a reverse proxy that ends TLS:** turn on `ForwardedHeaders:Enabled` and say in `KnownProxies` or `KnownNetworks` which proxies are trusted. Then the API sees the real client IP (for the rate limit) and the original scheme (to avoid a redirect loop). It is off by default on purpose: if the API accepted these headers from any client, someone could fake `X-Forwarded-For` to skip the limit. If you turn it on without any proxy, the API does not start.
 
 ```bash
 dotnet user-secrets set "ForwardedHeaders:Enabled" "true"
 dotnet user-secrets set "ForwardedHeaders:KnownProxies:0" "10.0.0.5"
 ```
-- **Hosts permitidos:** `AllowedHosts` viene en `*`; en producción, limítalo a tu dominio.
-- **Roles y sesiones:** el refresh rechaza cuentas bloqueadas, y `GET /users` comprueba en la base que quien llama sigue siendo `Admin`, sin esperar a que venza su access token.
+- **Allowed hosts:** `AllowedHosts` is `*` by default. In production, limit it to your domain.
+- **Roles and sessions:** the refresh rejects locked accounts, and `GET /users` checks in the database that the caller is still an `Admin`, without waiting for the access token to expire.
 
 ## Endpoints
 
-| Método | Ruta | Acceso | Descripción |
+| Method | Path | Access | Description |
 |---|---|---|---|
-| POST | `/auth/register` | público | Crea un usuario con rol `User` |
-| POST | `/auth/login` | público | Devuelve access token y refresh token |
-| POST | `/auth/refresh` | público (con refresh token) | Rota el refresh token y emite un par nuevo |
-| POST | `/auth/logout` | autenticado | Revoca la sesión del refresh token indicado |
-| GET | `/users/me` | autenticado | Datos del usuario actual |
-| GET | `/users?page=1&pageSize=20` | rol `Admin` | Lista paginada de usuarios (máximo 100 por página) |
-| GET | `/health` | público | Comprobación de vida |
+| POST | `/auth/register` | public | Creates a user with the `User` role |
+| POST | `/auth/login` | public | Returns an access token and a refresh token |
+| POST | `/auth/refresh` | public (with a refresh token) | Rotates the refresh token and issues a new pair |
+| POST | `/auth/logout` | authenticated | Revokes the session of the given refresh token |
+| GET | `/users/me` | authenticated | Data of the current user |
+| GET | `/users?page=1&pageSize=20` | `Admin` role | Paginated list of users (maximum 100 per page) |
+| GET | `/health` | public | Liveness check |
 
-Ejemplo de uso:
+Example:
 
 ```bash
 curl -X POST http://localhost:5299/auth/register -H "Content-Type: application/json" \
@@ -208,53 +193,53 @@ curl -X POST http://localhost:5299/auth/refresh -H "Content-Type: application/js
   -d '{"refreshToken":"<refreshToken>"}'
 ```
 
-Los errores usan el formato estándar `ProblemDetails`.
+Errors use the standard `ProblemDetails` format.
 
 ## Tests
 
-Los tests son de integración y arrancan la API real contra una base de datos temporal en un contenedor, por lo que necesitan Docker.
+The tests are integration tests. They start the real API against a temporary database in a container, so they need Docker.
 
 ```bash
 dotnet test                                   # SQL Server
-TEST_DB_PROVIDER=PostgreSql dotnet test       # PostgreSQL (en PowerShell: $env:TEST_DB_PROVIDER="PostgreSql")
+TEST_DB_PROVIDER=PostgreSql dotnet test       # PostgreSQL (in PowerShell: $env:TEST_DB_PROVIDER="PostgreSql")
 ```
 
-## Migraciones
+## Migrations
 
-Cada motor tiene su propio proyecto de migraciones. Para agregar una, desde `api-users`:
+Each database engine has its own migrations project. To add a migration, from `api-users`:
 
 ```bash
 dotnet tool restore
 
 # SQL Server
 Database__Provider=SqlServer ConnectionStrings__Default="Server=localhost;Database=x;User Id=sa;Password=x;TrustServerCertificate=True" \
-  dotnet ef migrations add <Nombre> -p src/ApiUsers.Migrations.SqlServer -s src/ApiUsers.Api -o Migrations
+  dotnet ef migrations add <Name> -p src/ApiUsers.Migrations.SqlServer -s src/ApiUsers.Api -o Migrations
 
 # PostgreSQL
 Database__Provider=PostgreSql ConnectionStrings__Default="Host=localhost;Database=x;Username=x;Password=x" \
-  dotnet ef migrations add <Nombre> -p src/ApiUsers.Migrations.PostgreSql -s src/ApiUsers.Api -o Migrations
+  dotnet ef migrations add <Name> -p src/ApiUsers.Migrations.PostgreSql -s src/ApiUsers.Api -o Migrations
 ```
 
-## Análisis realizados
+## Checks performed
 
-Esto es lo que se ejecutó sobre el código (noviembre de 2026), para que sirva de referencia de hasta dónde llega la verificación.
+This is what was run on the code (November 2026). It shows how far the verification goes.
 
-| Análisis | Cómo se hizo | Qué cubre |
+| Check | How it was done | What it covers |
 |---|---|---|
-| **Pruebas de integración** | La API real con `WebApplicationFactory` y una base de datos en contenedor, con SQL Server y con PostgreSQL | Todos los endpoints, validación de entrada, autenticación y autorización, bloqueo de cuentas, sembrado, OpenAPI y arranque con configuración inválida |
-| **Pruebas unitarias** | Reglas del dominio y casos de uso de `AuthService` con repositorio e identidad falsos, sin base de datos | Cada rama del refresh y del logout, incluidas las que una carrera real no permite forzar |
-| **Pruebas de arquitectura** | Comprobación de las referencias entre ensamblados | Que `Domain` no dependa de nada, que `Application` solo dependa de `Domain` e `Infrastructure` no conozca a `Api` ni a las migraciones |
-| **Desarrollo guiado por pruebas** | Cada comportamiento nuevo empezó con un test visto fallar por la razón esperada | Que los tests detecten de verdad el comportamiento que dicen probar |
-| **Concurrencia** | Peticiones simultáneas con el mismo refresh token y con el mismo email, repetidas varias veces en ambos motores | La rotación atómica de tokens y el registro duplicado simultáneo (que dio un 500 y se corrigió) |
-| **Revisión de mutaciones, a mano** | Se listaron cambios pequeños en el código que ningún test habría detectado (quitar un filtro, cambiar `<` por `<=`...) y se añadió un test para cada uno | La calidad de la propia suite, no solo del código |
-| **Revisión de seguridad** | Revisión estática de autenticación, JWT, sesiones, exposición y configuración, antes de cada commit y en rondas posteriores | Falsificación de tokens (`alg: none`, otra clave, payload alterado), robo de refresh tokens, enumeración de usuarios, tiempos de respuesta, escalada a `Admin`, fuerza bruta |
-| **Revisión de código y de rendimiento** | Revisión estática antes de cada commit | Índices, ausencia de consultas N+1, paginación acotada, separación por capas |
-| **Revisiones independientes** | Varias rondas externas sobre el código y las pruebas | Los hallazgos se aplicaron o se documentaron en las limitaciones de abajo |
-| **Dependencias** | `dotnet list package --vulnerable --include-transitive` | Sin paquetes con vulnerabilidades conocidas en el momento de la comprobación |
-| **Compilación estricta** | `dotnet build -warnaserror` | Cero advertencias |
-| **Verificación manual de punta a punta** | Recorrido completo con `curl` contra SQL Server en Docker | Registro, login, refresh, reutilización de un token, logout, rol de administrador y documentación |
+| **Integration tests** | The real API with `WebApplicationFactory` and a database in a container, with SQL Server and with PostgreSQL | All endpoints, input validation, authentication and authorization, account lockout, seeding, OpenAPI and start-up with an invalid configuration |
+| **Unit tests** | Domain rules and `AuthService` use cases with a fake repository and a fake identity service, without a database | Every branch of refresh and logout, including the ones that a real race cannot force |
+| **Architecture tests** | A check of the references between assemblies | `Domain` depends on nothing, `Application` depends only on `Domain`, and `Infrastructure` does not know `Api` or the migrations |
+| **Test-driven development** | Each new behavior started with a test that was seen failing for the expected reason | The tests really detect the behavior they say they test |
+| **Concurrency** | Requests at the same time with the same refresh token and with the same email, repeated several times on both engines | The atomic token rotation and the duplicate registration at the same time (which gave a 500 and was fixed) |
+| **Manual mutation review** | Small code changes that no test would have noticed were listed (removing a filter, changing `<` to `<=`...) and a test was added for each one | The quality of the test suite itself, not only of the code |
+| **Security review** | Static review of authentication, JWT, sessions, exposure and configuration, before each commit and in later rounds | Token forgery (`alg: none`, another key, changed payload), refresh token theft, user enumeration, response times, escalation to `Admin`, brute force |
+| **Code and performance review** | Static review before each commit | Indexes, no N+1 queries, limited pagination, separation by layers |
+| **Independent reviews** | Several outside rounds on the code and the tests | The findings were applied or written down in the limitations below |
+| **Dependencies** | `dotnet list package --vulnerable --include-transitive` | No packages with known vulnerabilities at the time of the check |
+| **Strict build** | `dotnet build -warnaserror` | Zero warnings |
+| **Manual end-to-end check** | A full run with `curl` against SQL Server in Docker | Register, login, refresh, reuse of a token, logout, admin role and documentation |
 
-Para repetir las comprobaciones automáticas, desde `api-users`:
+To repeat the automatic checks, from `api-users`:
 
 ```bash
 dotnet test
@@ -263,27 +248,27 @@ dotnet build -warnaserror
 dotnet list package --vulnerable --include-transitive
 ```
 
-**Lo que no se ha hecho:** pruebas de penetración, pruebas de carga con mediciones de rendimiento, medición de cobertura de código, análisis con un escáner de seguridad automatizado (estático o dinámico) ni revisión de la infraestructura donde se despliegue. Las revisiones de seguridad y de rendimiento fueron estáticas.
+**What was not done:** penetration tests, load tests with performance measurements, code coverage measurement, analysis with an automated security scanner (static or dynamic) and a review of the infrastructure where it is deployed. The security and performance reviews were static.
 
-## Limitaciones conocidas
+## Known limitations
 
-Cosas que esta API no hace y que conviene resolver antes de exponerla a usuarios reales:
+Things this API does not do, and that you should solve before you expose it to real users:
 
-- **Sin confirmación de email.** Cualquiera puede registrar un email ajeno. Hace falta un servicio de envío de correos y exigir `EmailConfirmed` en el login.
-- **El `409` del registro revela que un email ya existe.** Es inherente a responder con un conflicto; el login sí devuelve siempre el mismo `401`.
-- **El límite de peticiones vive en memoria y es por instancia.** Con varias réplicas, cada una cuenta por su lado; un límite global necesitaría un almacén compartido, como Redis.
-- **El sembrado no es atómico.** `DbSeeder` comprueba y luego crea: dos instancias arrancando a la vez con `MigrateOnStartup` pueden competir y una fallar por duplicado. Arrancar una sola instancia para sembrar lo evita.
-- **`TokenHash` usa `nvarchar(64)`,** y su comparación depende de la colación (insensible a mayúsculas en SQL Server, sensible en PostgreSQL). No hay riesgo práctico por los 256 bits aleatorios del token; un `varchar(44)` con colación binaria sería más exacto.
-- **`TryRotateAsync` usa una transacción manual.** Si algún día se activa `EnableRetryOnFailure`, hay que envolverla en `CreateExecutionStrategy().ExecuteAsync(...)`.
-- **Los refresh tokens vencidos o revocados no se purgan,** así que la tabla crece. Se resuelve con una tarea periódica de limpieza. Esa limpieza debe filtrar por `ExpiresAtUtc` y no por `RevokedAtUtc`: la detección de reutilización necesita conservar las filas revocadas hasta su vencimiento original. Un índice en `ExpiresAtUtc` solo haría falta si el borrado resulta lento.
-- **Una sola clave de firma.** Rotarla invalida los access tokens vigentes; para rotarla sin cortes haría falta un `kid` y una ventana con dos claves.
-- **Los cambios de rol o el borrado de una cuenta tardan hasta 15 minutos** en reflejarse en los endpoints que solo leen el token. `GET /users`, `GET /users/me` y el refresh sí consultan la base.
+- **No email confirmation.** Anyone can register someone else's email. You need an email-sending service and you need to require `EmailConfirmed` at login.
+- **The `409` on register shows that an email already exists.** This comes with answering with a conflict. Login always returns the same `401`.
+- **The rate limit lives in memory and is per instance.** With several replicas, each one counts on its own. A global limit needs a shared store, such as Redis.
+- **Seeding is not atomic.** `DbSeeder` checks and then creates: two instances that start at the same time with `MigrateOnStartup` can compete, and one can fail with a duplicate. Starting a single instance to seed avoids this.
+- **`TokenHash` uses `nvarchar(64)`,** and its comparison depends on the collation (case-insensitive in SQL Server, case-sensitive in PostgreSQL). There is no practical risk because the token has 256 random bits. A `varchar(44)` with a binary collation would be more exact.
+- **`TryRotateAsync` uses a manual transaction.** If `EnableRetryOnFailure` is ever turned on, wrap it in `CreateExecutionStrategy().ExecuteAsync(...)`.
+- **Expired or revoked refresh tokens are not deleted,** so the table grows. A periodic cleanup task solves this. The cleanup must filter by `ExpiresAtUtc` and not by `RevokedAtUtc`: the reuse detection needs to keep the revoked rows until their original expiry. An index on `ExpiresAtUtc` is only needed if the delete is slow.
+- **A single signing key.** Rotating it invalidates the current access tokens. To rotate it without downtime, you would need a `kid` and a period with two keys.
+- **Role changes or the deletion of an account take up to 15 minutes** to show in the endpoints that only read the token. `GET /users`, `GET /users/me` and refresh do query the database.
 
-## Decisiones de diseño
+## Design decisions
 
-- **Identity detrás de un puerto.** Identity resuelve contraseñas, bloqueo y roles, pero queda aislado en `Infrastructure`; los casos de uso no dependen de él.
-- **Refresh tokens con familias.** Cada sesión comparte un identificador de familia; reutilizar un token ya consumido o perder una carrera de rotación revoca la familia entera.
-- **Un access token no se puede revocar antes de vencer** (15 minutos). Es una característica propia de JWT; `logout` revoca el refresh token, y `/users/me` consulta la base para rechazar cuentas eliminadas.
-- **Respuestas que no revelan información.** Login responde lo mismo ante email desconocido, contraseña errónea o cuenta bloqueada, y calcula un hash aunque el email no exista para igualar los tiempos.
-- **Listados paginados** con tope, para que un endpoint de administración no devuelva una tabla entera.
-- **Un juego de migraciones por motor**, en proyectos separados, para no mezclar el SQL de cada proveedor.
+- **Identity behind a port.** Identity handles passwords, lockout and roles, but it stays isolated in `Infrastructure`. The use cases do not depend on it.
+- **Refresh tokens with families.** Each session shares a family identifier. Using a token that was already used, or losing a rotation race, revokes the whole family.
+- **An access token cannot be revoked before it expires** (15 minutes). This is a normal property of JWT. `logout` revokes the refresh token, and `/users/me` queries the database to reject deleted accounts.
+- **Answers that do not reveal information.** Login gives the same answer for an unknown email, a wrong password or a locked account, and it computes a hash even if the email does not exist, so the response times are the same.
+- **Paginated lists** with a maximum, so an admin endpoint does not return a whole table.
+- **One set of migrations per engine**, in separate projects, so the SQL of each provider is not mixed.
