@@ -8,6 +8,12 @@ public class KafkaOptions
     public int MessageTimeoutMs { get; set; } = 10_000;
 }
 
+public class OutboxOptions
+{
+    public int BatchSize { get; set; } = 50;
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(1);
+}
+
 public class ConsumerLoopOptions
 {
     public string Topic { get; set; } = "";

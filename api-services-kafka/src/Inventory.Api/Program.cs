@@ -27,6 +27,8 @@ if (kafka.Enabled)
             EnableIdempotence = true,
             MessageTimeoutMs = kafka.MessageTimeoutMs
         }).Build());
+    builder.Services.Configure<OutboxOptions>(builder.Configuration.GetSection("Outbox"));
+    builder.Services.AddHostedService<OutboxPublisher>();
     builder.Services.AddSingleton<IMessageHandler, OrderCreatedHandler>();
     builder.Services.AddHostedService(sp => new ConsumerLoop(
         new ConsumerBuilder<string, string>(new ConsumerConfig

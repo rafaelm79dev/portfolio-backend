@@ -25,7 +25,7 @@ public class ReservationService(InventoryDbContext db, TimeProvider clock)
 
         var wanted = items
             .GroupBy(i => i.ProductId)
-            .ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
+            .ToDictionary(g => g.Key, g => g.Sum(i => (long)i.Quantity)); // long: int sums can overflow
         var ids = wanted.Keys.Order().ToArray();
 
         // Lock in a fixed order (by id) so concurrent orders cannot deadlock each other.
@@ -47,8 +47,10 @@ public class ReservationService(InventoryDbContext db, TimeProvider clock)
         var now = clock.GetUtcNow();
         foreach (var id in ids)
         {
-            products[id].Reserve(wanted[id]);
-            db.StockReservations.Add(new StockReservation(orderId, id, wanted[id], now));
+            // Safe: the stock check above guarantees the quantity is not larger than an int stock value.
+            var quantity = (int)wanted[id];
+            products[id].Reserve(quantity);
+            db.StockReservations.Add(new StockReservation(orderId, id, quantity, now));
         }
 
         await db.SaveChangesAsync(ct);

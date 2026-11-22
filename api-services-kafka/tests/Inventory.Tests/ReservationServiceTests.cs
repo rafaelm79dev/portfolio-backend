@@ -115,6 +115,19 @@ public class ReservationServiceTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Quantities_that_overflow_when_summed_are_rejected_not_thrown()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var before = await StockOfAsync(provider, SeedData.Laptop);
+
+        var result = await ReserveAsync(provider, (SeedData.Laptop, int.MaxValue), (SeedData.Laptop, int.MaxValue));
+
+        Assert.False(result.Reserved);
+        Assert.Contains("stock", result.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await StockOfAsync(provider, SeedData.Laptop));
+    }
+
+    [Fact]
     public async Task Two_concurrent_orders_for_last_unit_reserve_only_one()
     {
         await using var provider = await CreateDatabaseAsync();

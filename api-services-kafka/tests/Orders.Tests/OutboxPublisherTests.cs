@@ -41,7 +41,9 @@ public class OutboxPublisherTests(PostgresFixture postgres, KafkaFixture kafka)
             BootstrapServers = bootstrapServers,
             Acks = Acks.All,
             EnableIdempotence = true,
-            MessageTimeoutMs = 2000
+            // Short when the broker is meant to be unreachable; generous when it is real, so a loaded machine
+            // does not turn a slow first acknowledgement into a false failure.
+            MessageTimeoutMs = bootstrapServers == Unreachable ? 2000 : 15000
         }).Build();
 
         var publisher = new OutboxPublisher(
