@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>api-services-kafka · Arquitectura</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--tx:#1d2733;--mut:#5b6775;--bd:#dde2e8;--ord:#dbeafe;--inv:#dcfce7;--kaf:#fef3c7;--db:#ede9fe}
+@media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2129;--tx:#e6ebf0;--mut:#98a4b3;--bd:#2d3744;--ord:#1e3a5f;--inv:#17402a;--kaf:#4a3a10;--db:#2f2552}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:24px 16px}
+main{max-width:980px;margin:auto}h1{margin:0 0 4px}h2{margin:32px 0 10px;font-size:18px}
+.sub{color:var(--mut);margin:0 0 20px}
+.lang{float:right;font-size:14px}
+a{color:inherit}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 16px}
+.box{border-radius:8px;padding:12px 16px;border:1px solid var(--bd)}
+.box b{display:block}.box small{display:block;color:var(--mut);margin-top:4px}
+.ord{background:var(--ord)}.inv{background:var(--inv)}.kaf{background:var(--kaf)}.db{background:var(--db)}
+.map{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.map .full{grid-column:1/-1;text-align:center}
+.stack{display:grid;gap:8px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}th{color:var(--mut);font-weight:600;font-size:13px}
+code{font:13px ui-monospace,Consolas,monospace;background:var(--bg);padding:1px 5px;border-radius:4px}
+.t{overflow-x:auto}
+ol,ul{margin:6px 0 0;padding-left:20px}
+@media (max-width:640px){.map{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<div class="lang"><a href="architecture.html">English</a></div>
+<h1>api-services-kafka</h1>
+<p class="sub">Dos servicios .NET, cada uno con su base de datos, que se comunican solo por Kafka.</p>
+
+<h2>Componentes</h2>
+<div class="map">
+  <div class="stack">
+    <div class="box ord"><b>orders-api</b>Crea los pedidos y le pide el stock a inventory. Después marca cada pedido como confirmado o rechazado.<small>Puerto 8081</small></div>
+    <div class="box db"><b>Base de datos de pedidos</b>PostgreSQL<small>Puerto 5433</small></div>
+  </div>
+  <div class="stack">
+    <div class="box inv"><b>inventory-api</b>Reserva el stock de un pedido, todas las líneas o ninguna, y responde.<small>Puerto 8082</small></div>
+    <div class="box db"><b>Base de datos de inventario</b>PostgreSQL<small>Puerto 5434</small></div>
+  </div>
+  <div class="box kaf full"><b>Kafka</b>El único vínculo entre los dos servicios. Dos topics, <code>orders.events</code> e <code>inventory.events</code>, y un topic de mensajes fallidos (dead-letter) para cada uno.<small>Puerto 9092 · Kafka UI en el puerto 8085</small></div>
+</div>
+<p class="sub" style="margin-top:10px">Un servicio nunca lee la base de datos del otro ni lo llama por HTTP. Solo comparten los tipos de mensaje.</p>
+
+<h2>Cómo fluye un pedido</h2>
+<div class="card"><ol>
+<li>El cliente crea un pedido. orders-api lo guarda como <code>Pending</code>, junto con el evento que debe enviar, y responde enseguida.</li>
+<li>orders-api publica <code>OrderCreated</code> en Kafka.</li>
+<li>inventory-api lo lee y reserva el stock. Responde con <code>StockReserved</code> o <code>StockRejected</code>.</li>
+<li>orders-api lee la respuesta y deja el pedido en <code>Confirmed</code> o <code>Rejected</code>.</li>
+<li>El cliente consulta el pedido y ve el estado final.</li>
+</ol></div>
+<p class="sub" style="margin-top:8px">Hasta que llega la respuesta, el pedido está en <code>Pending</code>. Los dos servicios se ponen de acuerdo tras un instante (consistencia eventual).</p>
+
+<h2>Cuando algo falla</h2>
+<div class="t"><table>
+<tr><th>Situación</th><th>Qué pasa</th></tr>
+<tr><td>Kafka no está disponible</td><td>Los pedidos se aceptan igual. Los eventos esperan en la base de datos y salen cuando Kafka vuelve.</td></tr>
+<tr><td>Un mensaje llega dos veces</td><td>El consumidor lo reconoce y no hace nada. El stock no se descuenta dos veces.</td></tr>
+<tr><td>Falla el procesamiento</td><td>3 intentos. Si todos fallan, el mensaje va al topic de mensajes fallidos con la causa.</td></tr>
+<tr><td>Dos pedidos por la última unidad</td><td>Uno se queda con la unidad y el otro se rechaza. El stock nunca queda negativo.</td></tr>
+</table></div>
+
+<h2>Endpoints</h2>
+<div class="t"><table>
+<tr><th>Servicio</th><th>Método y ruta</th><th>Respuesta</th></tr>
+<tr><td>orders-api</td><td><code>POST /orders</code></td><td>202 con el id del pedido; 400 si las líneas no son válidas</td></tr>
+<tr><td>orders-api</td><td><code>GET /orders/{id}</code></td><td>200 con el estado; 404</td></tr>
+<tr><td>inventory-api</td><td><code>GET /products</code>, <code>GET /products/{id}</code></td><td>200; 404</td></tr>
+</table></div>
+
+<h2>Puesta en marcha</h2>
+<div class="card"><code>docker compose up --build</code> levanta todo. En el README están los comandos para probarlo y qué mirar en Kafka UI.</div>
+
+<h2>Limitaciones conocidas</h2>
+<ul>
+<li>Si una respuesta acaba en el topic de mensajes fallidos, el pedido se queda en <code>Pending</code>. Nada lo reprocesa.</li>
+<li>No hay flujo de cancelación, así que el stock reservado nunca se libera.</li>
+<li>Sin autenticación y sin endpoints de salud.</li>
+</ul>
+</main>
+</body>
+</html>

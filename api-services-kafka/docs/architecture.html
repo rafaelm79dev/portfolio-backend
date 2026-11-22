@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>api-services-kafka · Architecture</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--tx:#1d2733;--mut:#5b6775;--bd:#dde2e8;--ord:#dbeafe;--inv:#dcfce7;--kaf:#fef3c7;--db:#ede9fe}
+@media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2129;--tx:#e6ebf0;--mut:#98a4b3;--bd:#2d3744;--ord:#1e3a5f;--inv:#17402a;--kaf:#4a3a10;--db:#2f2552}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:24px 16px}
+main{max-width:980px;margin:auto}h1{margin:0 0 4px}h2{margin:32px 0 10px;font-size:18px}
+.sub{color:var(--mut);margin:0 0 20px}
+.lang{float:right;font-size:14px}
+a{color:inherit}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 16px}
+.box{border-radius:8px;padding:12px 16px;border:1px solid var(--bd)}
+.box b{display:block}.box small{display:block;color:var(--mut);margin-top:4px}
+.ord{background:var(--ord)}.inv{background:var(--inv)}.kaf{background:var(--kaf)}.db{background:var(--db)}
+.map{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.map .full{grid-column:1/-1;text-align:center}
+.stack{display:grid;gap:8px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}th{color:var(--mut);font-weight:600;font-size:13px}
+code{font:13px ui-monospace,Consolas,monospace;background:var(--bg);padding:1px 5px;border-radius:4px}
+.t{overflow-x:auto}
+ol,ul{margin:6px 0 0;padding-left:20px}
+@media (max-width:640px){.map{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<div class="lang"><a href="architecture.es.html">Español</a></div>
+<h1>api-services-kafka</h1>
+<p class="sub">Two .NET services, each with its own database, that talk to each other only through Kafka.</p>
+
+<h2>Components</h2>
+<div class="map">
+  <div class="stack">
+    <div class="box ord"><b>orders-api</b>Creates orders and asks inventory for the stock. Then it marks each order as confirmed or rejected.<small>Port 8081</small></div>
+    <div class="box db"><b>Orders database</b>PostgreSQL<small>Port 5433</small></div>
+  </div>
+  <div class="stack">
+    <div class="box inv"><b>inventory-api</b>Reserves the stock for an order, all lines or none, and answers.<small>Port 8082</small></div>
+    <div class="box db"><b>Inventory database</b>PostgreSQL<small>Port 5434</small></div>
+  </div>
+  <div class="box kaf full"><b>Kafka</b>The only link between the two services. Two topics, <code>orders.events</code> and <code>inventory.events</code>, plus a dead-letter topic for each.<small>Port 9092 · Kafka UI on port 8085</small></div>
+</div>
+<p class="sub" style="margin-top:10px">A service never reads the other one's database and never calls it over HTTP. They only share the message types.</p>
+
+<h2>How an order flows</h2>
+<div class="card"><ol>
+<li>The client creates an order. orders-api saves it as <code>Pending</code>, together with the event to send, and answers right away.</li>
+<li>orders-api publishes <code>OrderCreated</code> in Kafka.</li>
+<li>inventory-api reads it and reserves the stock. It answers with <code>StockReserved</code> or <code>StockRejected</code>.</li>
+<li>orders-api reads the answer and sets the order to <code>Confirmed</code> or <code>Rejected</code>.</li>
+<li>The client asks for the order and sees the final status.</li>
+</ol></div>
+<p class="sub" style="margin-top:8px">Until the answer arrives, the order is <code>Pending</code>. The two services agree after a short moment (eventual consistency).</p>
+
+<h2>When something fails</h2>
+<div class="t"><table>
+<tr><th>Situation</th><th>What happens</th></tr>
+<tr><td>Kafka is down</td><td>Orders are still accepted. The events wait in the database and are sent when Kafka is back.</td></tr>
+<tr><td>A message arrives twice</td><td>The consumer recognises it and does nothing. The stock is not reduced twice.</td></tr>
+<tr><td>Processing fails</td><td>3 attempts. If all fail, the message goes to the dead-letter topic with the reason.</td></tr>
+<tr><td>Two orders for the last unit</td><td>One gets the unit, the other is rejected. Stock never goes below zero.</td></tr>
+</table></div>
+
+<h2>Endpoints</h2>
+<div class="t"><table>
+<tr><th>Service</th><th>Method and path</th><th>Response</th></tr>
+<tr><td>orders-api</td><td><code>POST /orders</code></td><td>202 with the order id; 400 for invalid lines</td></tr>
+<tr><td>orders-api</td><td><code>GET /orders/{id}</code></td><td>200 with the status; 404</td></tr>
+<tr><td>inventory-api</td><td><code>GET /products</code>, <code>GET /products/{id}</code></td><td>200; 404</td></tr>
+</table></div>
+
+<h2>Run it</h2>
+<div class="card"><code>docker compose up --build</code> starts everything. See the README for the commands to try it and for what to look at in Kafka UI.</div>
+
+<h2>Known limitations</h2>
+<ul>
+<li>If an answer ends in the dead-letter topic, the order stays <code>Pending</code>. Nothing reprocesses it.</li>
+<li>There is no cancel flow, so reserved stock is never released.</li>
+<li>No authentication and no health endpoints.</li>
+</ul>
+</main>
+</body>
+</html>
