@@ -19,5 +19,6 @@ public sealed class InventoryApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Inventory", _connectionString);
+        builder.UseSetting("Kafka:Enabled", "false");
     }
 }
