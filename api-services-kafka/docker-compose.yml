@@ -70,6 +70,54 @@ services:
       timeout: 5s
       retries: 10
 
+  # Creates the topics up front (3 partitions each) and exits.
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for topic in orders.events inventory.events orders.events.dlq inventory.events.dlq; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists \
+            --topic $$topic --partitions 3 --replication-factor 1
+        done
+
+  orders-api:
+    build:
+      context: .
+      dockerfile: src/Orders.Api/Dockerfile
+    container_name: orders-api
+    ports:
+      - "8081:8080"
+    environment:
+      ConnectionStrings__Orders: Host=orders-db;Port=5432;Database=orders;Username=orders;Password=orders
+      Kafka__BootstrapServers: kafka:19092
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  inventory-api:
+    build:
+      context: .
+      dockerfile: src/Inventory.Api/Dockerfile
+    container_name: inventory-api
+    ports:
+      - "8082:8080"
+    environment:
+      ConnectionStrings__Inventory: Host=inventory-db;Port=5432;Database=inventory;Username=inventory;Password=inventory
+      Kafka__BootstrapServers: kafka:19092
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
 volumes:
   orders-data:
   inventory-data:
