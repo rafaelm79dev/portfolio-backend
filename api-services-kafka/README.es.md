@@ -223,3 +223,50 @@ Necesitas Docker: los tests levantan PostgreSQL y Kafka reales en contenedores (
 - Las filas publicadas de `outbox_messages` y las de `processed_messages` no se purgan.
 - Un mensaje que nunca se puede enviar (por ejemplo, demasiado grande) bloquea a los que van detrás en el outbox.
 - Sin autenticación, sin Schema Registry (los mensajes son JSON simple) y sin endpoints de salud.
+
+### Notas de la revisión
+
+Estos puntos salen de una revisión que supone que los servicios corren en una red interna cerrada, no en internet. Todavía no están corregidos.
+
+**Seguridad**
+
+- Kafka, Kafka UI y las dos bases de datos están publicados en todas las interfaces de red, sin usuario y sin cifrado (`PLAINTEXT`). Está bien en una máquina local. En una red compartida, publica los puertos solo en `127.0.0.1` o añade autenticación y TLS.
+- Se confía en el bus de mensajes. Quien pueda escribir en `inventory.events` y conozca un `orderId` (se devuelve en el `202`) puede confirmar o rechazar ese pedido. La idempotencia cubre el mismo `messageId`, no el mismo pedido: un segundo `OrderCreated` con otro `messageId` vuelve a reservar el stock.
+- `POST /orders` no tiene tope de líneas ni de cantidad.
+- Las contraseñas de demostración están en `appsettings.json`, en el compose y dentro de la imagen de Docker. Kafka UI usa la etiqueta `latest` y no tiene login.
+- La cabecera `error` del topic de mensajes fallidos guarda el mensaje de la excepción, que puede incluir detalles internos.
+- `AllowedHosts` es `*` y el compose no usa HTTPS.
+
+**Fiabilidad**
+
+- Un motivo de rechazo largo no cabe. Inventory junta todos los productos en un texto y la columna `RejectionReason` de orders admite 500 caracteres. Con unos 13 productos desconocidos el guardado falla, el mensaje va al topic de mensajes fallidos y el pedido se queda en `Pending`.
+- Cuando un pedido ya está decidido, un segundo resultado se ignora sin dejar rastro: gana el primero.
+- `POST /orders` no tiene clave de idempotencia. Si el cliente reintenta, se crean dos pedidos y se reserva el stock dos veces.
+
+**Rendimiento**
+
+- La transacción del outbox sigue abierta mientras el mensaje se envía a Kafka (hasta 10 segundos). Con más de una réplica no se garantiza el orden de los mensajes, así que usa una réplica por servicio.
+- Un solo hilo lee todas las particiones de un topic y los reintentos esperan dentro de ese hilo, así que un mensaje lento retrasa a los demás. Cada mensaje confirma su propio offset: es seguro, pero limita el caudal.
+
+**Operación**
+
+- Las migraciones se ejecutan al arrancar el proceso, sin bloqueo entre réplicas.
+- Sin health checks, sin métricas (como el retraso del outbox) y sin trazas entre servicios.
+- Sin pipeline de CI, y las advertencias del compilador no se tratan como errores.
+
+## Lecturas de referencia
+
+Dos artículos usados como lista de comprobación para la revisión de este proyecto:
+
+- [Building enterprise .NET APIs](https://www.ronnydelgado.com/my-blog/building-enterprise-dotnet-apis-with-claude-skills): un catálogo de 22 patrones (capas, validación, outbox con idempotencia, health checks, auditoría, tests de integración con Testcontainers).
+- [.NET development guidance](https://thecodeman.net/posts/dotnet-skills-for-coding-agents): una lista de revisión de consultas de EF Core, gestión central de paquetes, convenciones de Minimal APIs y una comprobación clara de "terminado" (compilar sin advertencias nuevas y tests en verde).
+
+| Práctica de los artículos | Estado aquí |
+|---|---|
+| Outbox con idempotencia | Hecho |
+| Tests de integración con `WebApplicationFactory` y Testcontainers | Hecho |
+| Gestión central de paquetes | Hecho |
+| Revisión de consultas de EF Core (N+1, viajes a la base, índices) | Pendiente |
+| Health checks | Pendiente |
+| `TypedResults` en Minimal APIs | Pendiente |
+| Auditoría y borrado lógico | No aplicado (no hace falta en esta demo) |

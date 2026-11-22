@@ -272,3 +272,20 @@ Cosas que esta API no hace y que conviene resolver antes de exponerla a usuarios
 - **Respuestas que no revelan información.** Login responde lo mismo ante email desconocido, contraseña errónea o cuenta bloqueada, y calcula un hash aunque el email no exista para igualar los tiempos.
 - **Listados paginados** con tope, para que un endpoint de administración no devuelva una tabla entera.
 - **Un juego de migraciones por motor**, en proyectos separados, para no mezclar el SQL de cada proveedor.
+
+## Lecturas de referencia
+
+Dos artículos usados como lista de comprobación para la revisión de este proyecto:
+
+- [Building enterprise .NET APIs](https://www.ronnydelgado.com/my-blog/building-enterprise-dotnet-apis-with-claude-skills): un catálogo de 22 patrones (capas, validación, outbox con idempotencia, health checks, auditoría, tests de integración con Testcontainers).
+- [.NET development guidance](https://thecodeman.net/posts/dotnet-skills-for-coding-agents): una lista de revisión de consultas de EF Core, gestión central de paquetes, convenciones de Minimal APIs y una comprobación clara de "terminado" (compilar sin advertencias nuevas y tests en verde).
+
+| Práctica de los artículos | Estado aquí |
+|---|---|
+| Clean Architecture con capas separadas | Hecho (verificado con tests de arquitectura) |
+| Tests de integración con `WebApplicationFactory` y un contenedor de base de datos | Hecho |
+| Health check y límite de peticiones | Hecho (`/health` y `/auth/*`) |
+| Gestión central de paquetes | Pendiente |
+| Revisión de consultas de EF Core (N+1, viajes a la base, índices) | Pendiente |
+| `TypedResults` en Minimal APIs | Pendiente |
+| Auditoría y borrado lógico | No aplicado |

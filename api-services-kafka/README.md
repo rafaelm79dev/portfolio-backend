@@ -223,3 +223,50 @@ You need Docker. The tests start real PostgreSQL and Kafka containers (Testconta
 - Published rows in `outbox_messages` and rows in `processed_messages` are never deleted.
 - A message that can never be sent (for example, too large) blocks the messages behind it in the outbox.
 - No authentication, no Schema Registry (messages are plain JSON) and no health endpoints.
+
+### Review notes
+
+These points come from a review that assumes the services run on a closed internal network, not on the internet. They are not fixed yet.
+
+**Security**
+
+- Kafka, Kafka UI and both databases are published on all network interfaces, with no login and no encryption (`PLAINTEXT`). This is fine on a local machine. On a shared network, publish the ports only on `127.0.0.1`, or add authentication and TLS.
+- The message bus is trusted. Anyone who can write to `inventory.events` and knows an `orderId` (it is returned in the `202`) can confirm or reject that order. Idempotency covers the same `messageId`, not the same order: a second `OrderCreated` with another `messageId` reserves the stock again.
+- `POST /orders` has no limit on the number of lines or on the quantity.
+- The demo passwords are in `appsettings.json`, in the compose file and inside the Docker image. Kafka UI uses the `latest` tag and has no login.
+- The `error` header in the dead-letter topic holds the exception message, which can include internal details.
+- `AllowedHosts` is `*` and the compose file has no HTTPS.
+
+**Reliability**
+
+- A long rejection reason does not fit. Inventory joins all the products into one text, and the `RejectionReason` column in orders holds 500 characters. With about 13 unknown products the save fails, the message goes to the dead-letter topic and the order stays `Pending`.
+- When an order is already decided, a second result is ignored without any trace: the first one wins.
+- `POST /orders` has no idempotency key. If a client retries, two orders are created and the stock is reserved twice.
+
+**Performance**
+
+- The outbox transaction stays open while the message is sent to Kafka (up to 10 seconds). With more than one replica, the order of the messages is not guaranteed, so run one replica per service.
+- One thread reads all the partitions of a topic, and the retries wait inside that thread, so a slow message delays the others. Each message commits its own offset. This is safe, but it limits the throughput.
+
+**Operations**
+
+- Migrations run when the process starts, with no lock between replicas.
+- No health checks, no metrics (such as outbox lag) and no tracing across services.
+- No CI pipeline, and compiler warnings are not treated as errors.
+
+## Further reading
+
+Two articles used as a checklist for the review of this project:
+
+- [Building enterprise .NET APIs](https://www.ronnydelgado.com/my-blog/building-enterprise-dotnet-apis-with-claude-skills): a catalog of 22 patterns (layers, validation, outbox with idempotency, health checks, audit trail, integration tests with Testcontainers).
+- [.NET development guidance](https://thecodeman.net/posts/dotnet-skills-for-coding-agents): a review checklist for EF Core queries, central package management, Minimal API conventions and a clear "done" check (build without new warnings and passing tests).
+
+| Practice from the articles | Status here |
+|---|---|
+| Outbox with idempotency | Done |
+| Integration tests with `WebApplicationFactory` and Testcontainers | Done |
+| Central package management | Done |
+| Review of EF Core queries (N+1, round-trips, indexes) | Pending |
+| Health checks | Pending |
+| `TypedResults` in Minimal APIs | Pending |
+| Audit trail and soft delete | Not applied (not needed for this demo) |

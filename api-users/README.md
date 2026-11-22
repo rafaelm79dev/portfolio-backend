@@ -272,3 +272,20 @@ Things this API does not do, and that you should solve before you expose it to r
 - **Answers that do not reveal information.** Login gives the same answer for an unknown email, a wrong password or a locked account, and it computes a hash even if the email does not exist, so the response times are the same.
 - **Paginated lists** with a maximum, so an admin endpoint does not return a whole table.
 - **One set of migrations per engine**, in separate projects, so the SQL of each provider is not mixed.
+
+## Further reading
+
+Two articles used as a checklist for the review of this project:
+
+- [Building enterprise .NET APIs](https://www.ronnydelgado.com/my-blog/building-enterprise-dotnet-apis-with-claude-skills): a catalog of 22 patterns (layers, validation, outbox with idempotency, health checks, audit trail, integration tests with Testcontainers).
+- [.NET development guidance](https://thecodeman.net/posts/dotnet-skills-for-coding-agents): a review checklist for EF Core queries, central package management, Minimal API conventions and a clear "done" check (build without new warnings and passing tests).
+
+| Practice from the articles | Status here |
+|---|---|
+| Clean Architecture with separated layers | Done (verified by architecture tests) |
+| Integration tests with `WebApplicationFactory` and a database container | Done |
+| Health check and rate limiting | Done (`/health` and `/auth/*`) |
+| Central package management | Pending |
+| Review of EF Core queries (N+1, round-trips, indexes) | Pending |
+| `TypedResults` in Minimal APIs | Pending |
+| Audit trail and soft delete | Not applied |
