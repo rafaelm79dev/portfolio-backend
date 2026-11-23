@@ -128,7 +128,7 @@ Levanta Kafka, las dos bases de datos, las dos APIs y Kafka UI. El servicio `kaf
 | Base de datos de inventario | `localhost:5434`, base `inventory`, usuario y contraseña `inventory` |
 | Kafka (desde tu máquina) | `localhost:9092` |
 
-Las contraseñas son valores de desarrollo local. Los puertos se publican solo en `127.0.0.1`, así que otras máquinas de tu red no pueden llegar a ellos. Las dos APIs también responden `/health` y `/ready`, y Docker usa `/ready` para su health check.
+Las contraseñas son valores de desarrollo local. Los puertos se publican solo en `127.0.0.1`, así que otras máquinas de tu red no pueden llegar a ellos. Las dos APIs también responden `/health` y `/ready`, y Docker usa `/ready` para su health check. Docker solo marca el contenedor como `unhealthy`: no lo reinicia. Usa `/health` para saber si el proceso está vivo y `/ready` para saber si puede trabajar.
 
 ### Probarlo
 
@@ -206,8 +206,8 @@ Necesitas Docker: los tests levantan PostgreSQL y Kafka reales en contenedores (
 
 | Proyecto | Qué prueba |
 |---|---|
-| `Orders.Tests` (52) | Dominio del pedido, API (topes y clave de idempotencia), publicador de outbox contra Kafka real, consumidor de respuestas, reintentos y dead-letter, health checks |
-| `Inventory.Tests` (39) | Reserva de stock (todo o nada, líneas repetidas, concurrencia, desbordamiento de cantidades, motivos de rechazo cortos, una reserva por pedido), API de productos, consumidor idempotente, publicador de outbox, health checks |
+| `Orders.Tests` (53) | Dominio del pedido, API (topes y clave de idempotencia), publicador de outbox contra Kafka real, consumidor de respuestas, reintentos y dead-letter, health checks |
+| `Inventory.Tests` (42) | Reserva de stock (todo o nada, líneas repetidas, concurrencia, desbordamiento de cantidades, motivos de rechazo cortos, una decisión final por pedido), API de productos, consumidor idempotente, publicador de outbox, health checks |
 | `EndToEnd.Tests` (5) | Las dos APIs juntas con Kafka y PostgreSQL reales: pedido confirmado, pedido rechazado, mensaje duplicado, Kafka caído y recuperado, mensaje inválido al dead-letter |
 
 ## Decisiones de diseño
@@ -236,6 +236,8 @@ Estos puntos salen de una revisión que supone que los servicios corren en una r
 - `POST /orders` acepta como máximo 100 líneas y 10.000 unidades por línea. También admite una cabecera opcional `Idempotency-Key`: un reintento con la misma clave devuelve el mismo pedido.
 - Un segundo `OrderCreated` del mismo pedido (con otro `messageId`) ya no vuelve a reservar el stock. Inventory comprueba primero el pedido, y un índice único sobre `(order_id, product_id)` es la red de seguridad.
 - Un resultado que llega para un pedido que ya está decidido se registra como aviso en el log.
+- Inventory recuerda su decisión para cada pedido, fuera sí o no. Un mensaje posterior del mismo pedido recibe la misma respuesta y no toma stock. Antes, un segundo mensaje de un pedido que se había rechazado todavía podía reservar stock, y el pedido (ya `Rejected`) lo ignoraba.
+- El consumidor indica que está vivo en cada intento y no solo una vez por vuelta, y `/ready` admite 60 segundos de silencio (por encima de los 30 que puede esperar un comando de base de datos). Un mensaje lento o reintentado ya no hace fallar `/ready`.
 - El compose publica los puertos solo en `127.0.0.1`, fija la imagen de Kafka UI y tiene health checks y política de reinicio. Las dos APIs tienen `/health` (el proceso está vivo) y `/ready` (la base de datos, Kafka y el consumidor están bien).
 - Las advertencias del compilador hacen fallar la compilación.
 
@@ -248,6 +250,10 @@ Estos puntos salen de una revisión que supone que los servicios corren en una r
 - Las contraseñas de demostración están en `appsettings.json`, en el compose y dentro de la imagen de Docker. Kafka UI no tiene login.
 - La cabecera `error` del topic de mensajes fallidos guarda el mensaje de la excepción, que puede incluir detalles internos.
 - `AllowedHosts` es `*` y el compose no usa HTTPS.
+
+*Fiabilidad*
+
+- Usar la misma `Idempotency-Key` con otro cuerpo devuelve el primer pedido (`202`), no un `409`. Quien reutiliza una clave por error cree que se creó el pedido nuevo.
 
 *Rendimiento*
 

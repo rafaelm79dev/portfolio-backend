@@ -128,7 +128,7 @@ This starts Kafka, the two databases, the two APIs and Kafka UI. The `kafka-init
 | Inventory database | `localhost:5434`, database `inventory`, user and password `inventory` |
 | Kafka (from your machine) | `localhost:9092` |
 
-The passwords are for local development only. The ports are published only on `127.0.0.1`, so other machines in your network cannot reach them. Both APIs also answer `/health` and `/ready`, and Docker uses `/ready` for its health check.
+The passwords are for local development only. The ports are published only on `127.0.0.1`, so other machines in your network cannot reach them. Both APIs also answer `/health` and `/ready`, and Docker uses `/ready` for its health check. Docker only marks a container as `unhealthy`: it does not restart it. Use `/health` to know whether the process is alive, and `/ready` to know whether it can do work.
 
 ### Try it
 
@@ -206,8 +206,8 @@ You need Docker. The tests start real PostgreSQL and Kafka containers (Testconta
 
 | Project | What it tests |
 |---|---|
-| `Orders.Tests` (52) | Order domain, API (limits and idempotency key), outbox publisher against real Kafka, result consumer, retries and dead-letter, health checks |
-| `Inventory.Tests` (39) | Stock reservation (all or nothing, repeated lines, concurrency, number overflow, short rejection reasons, one reservation per order), products API, idempotent consumer, outbox publisher, health checks |
+| `Orders.Tests` (53) | Order domain, API (limits and idempotency key), outbox publisher against real Kafka, result consumer, retries and dead-letter, health checks |
+| `Inventory.Tests` (42) | Stock reservation (all or nothing, repeated lines, concurrency, number overflow, short rejection reasons, one final decision per order), products API, idempotent consumer, outbox publisher, health checks |
 | `EndToEnd.Tests` (5) | Both APIs together with real Kafka and PostgreSQL: confirmed order, rejected order, duplicate message, Kafka down and back, invalid message to the dead-letter topic |
 
 ## Design decisions
@@ -236,6 +236,8 @@ These points come from a review that assumes the services run on a closed intern
 - `POST /orders` accepts at most 100 lines and 10,000 units per line. It also accepts an optional `Idempotency-Key` header: a retry with the same key returns the same order.
 - A second `OrderCreated` for the same order (with another `messageId`) no longer reserves the stock again. Inventory checks the order first, and a unique index on `(order_id, product_id)` is the safety net.
 - A result that arrives for an order that is already decided is logged as a warning.
+- Inventory remembers its decision for every order, whether it was yes or no. A later message for the same order gets the same answer and takes no stock. Before, a second message for an order that had been rejected could still reserve stock, and the order (already `Rejected`) would ignore it.
+- The consumer reports that it is alive at every attempt, not only once per loop, and `/ready` allows 60 seconds of silence (above the 30 seconds that a database command can wait). A slow or retried message no longer makes `/ready` fail.
 - The compose file publishes the ports only on `127.0.0.1`, pins the Kafka UI image, and has health checks and a restart policy. Both APIs have `/health` (the process is alive) and `/ready` (the database, Kafka and the consumer are fine).
 - Compiler warnings fail the build.
 
@@ -248,6 +250,10 @@ These points come from a review that assumes the services run on a closed intern
 - The demo passwords are in `appsettings.json`, in the compose file and inside the Docker image. Kafka UI has no login.
 - The `error` header in the dead-letter topic holds the exception message, which can include internal details.
 - `AllowedHosts` is `*` and the compose file has no HTTPS.
+
+*Reliability*
+
+- Using the same `Idempotency-Key` with a different body returns the first order (`202`), not a `409`. Someone who reuses a key by mistake believes the new order was created.
 
 *Performance*
 
