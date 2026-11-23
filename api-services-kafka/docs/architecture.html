@@ -69,9 +69,10 @@ ol,ul{margin:6px 0 0;padding-left:20px}
 <h2>Endpoints</h2>
 <div class="t"><table>
 <tr><th>Service</th><th>Method and path</th><th>Response</th></tr>
-<tr><td>orders-api</td><td><code>POST /orders</code></td><td>202 with the order id; 400 for invalid lines</td></tr>
+<tr><td>orders-api</td><td><code>POST /orders</code></td><td>202 with the order id; 400 for invalid lines (at most 100 lines, 1 to 10,000 units each). Optional <code>Idempotency-Key</code> header: a retry returns the same order</td></tr>
 <tr><td>orders-api</td><td><code>GET /orders/{id}</code></td><td>200 with the status; 404</td></tr>
 <tr><td>inventory-api</td><td><code>GET /products</code>, <code>GET /products/{id}</code></td><td>200; 404</td></tr>
+<tr><td>both</td><td><code>GET /health</code>, <code>GET /ready</code></td><td>200 when alive and when the database, Kafka and the consumer are fine; /ready answers 503 if not</td></tr>
 </table></div>
 
 <h2>Run it</h2>
@@ -81,7 +82,7 @@ ol,ul{margin:6px 0 0;padding-left:20px}
 <ul>
 <li>If an answer ends in the dead-letter topic, the order stays <code>Pending</code>. Nothing reprocesses it.</li>
 <li>There is no cancel flow, so reserved stock is never released.</li>
-<li>No authentication and no health endpoints.</li>
+<li>No authentication, and Kafka and the databases have no login or encryption: use it on a closed network.</li>
 </ul>
 </main>
 </body>

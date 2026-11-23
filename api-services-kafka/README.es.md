@@ -128,7 +128,7 @@ Levanta Kafka, las dos bases de datos, las dos APIs y Kafka UI. El servicio `kaf
 | Base de datos de inventario | `localhost:5434`, base `inventory`, usuario y contraseña `inventory` |
 | Kafka (desde tu máquina) | `localhost:9092` |
 
-Las contraseñas son valores de desarrollo local.
+Las contraseñas son valores de desarrollo local. Los puertos se publican solo en `127.0.0.1`, así que otras máquinas de tu red no pueden llegar a ellos. Las dos APIs también responden `/health` y `/ready`, y Docker usa `/ready` para su health check.
 
 ### Probarlo
 
@@ -170,10 +170,12 @@ Si tenías las APIs del compose corriendo, páralas antes (`docker compose stop 
 
 | Servicio | Método | Ruta | Respuestas |
 |---|---|---|---|
-| orders-api | POST | `/orders` | `202` con `{ "orderId": "..." }`; `400` si no hay líneas o una cantidad es 0 o negativa |
+| orders-api | POST | `/orders` | `202` con `{ "orderId": "..." }`; `400` si no hay líneas, hay más de 100 o una cantidad no está entre 1 y 10.000. Cabecera opcional `Idempotency-Key`: la misma clave devuelve el mismo pedido |
 | orders-api | GET | `/orders/{id}` | `200` con estado, motivo y líneas; `404` |
 | inventory-api | GET | `/products` | `200` |
 | inventory-api | GET | `/products/{id}` | `200`; `404` |
+| ambos | GET | `/health` | `200` mientras el proceso está vivo |
+| ambos | GET | `/ready` | `200` si la base de datos, Kafka y el consumidor están bien; `503` si no |
 
 No hay autenticación. Productos de ejemplo: Laptop (10), Mouse (50), Keyboard (30), Monitor (5) y Headset (20).
 
@@ -204,8 +206,8 @@ Necesitas Docker: los tests levantan PostgreSQL y Kafka reales en contenedores (
 
 | Proyecto | Qué prueba |
 |---|---|
-| `Orders.Tests` (29) | Dominio del pedido, API, publicador de outbox contra Kafka real, consumidor de respuestas, reintentos y dead-letter |
-| `Inventory.Tests` (23) | Reserva de stock (todo o nada, líneas repetidas, concurrencia, desbordamiento de cantidades), API de productos, consumidor idempotente, publicador de outbox |
+| `Orders.Tests` (52) | Dominio del pedido, API (topes y clave de idempotencia), publicador de outbox contra Kafka real, consumidor de respuestas, reintentos y dead-letter, health checks |
+| `Inventory.Tests` (39) | Reserva de stock (todo o nada, líneas repetidas, concurrencia, desbordamiento de cantidades, motivos de rechazo cortos, una reserva por pedido), API de productos, consumidor idempotente, publicador de outbox, health checks |
 | `EndToEnd.Tests` (5) | Las dos APIs juntas con Kafka y PostgreSQL reales: pedido confirmado, pedido rechazado, mensaje duplicado, Kafka caído y recuperado, mensaje inválido al dead-letter |
 
 ## Decisiones de diseño
@@ -222,37 +224,40 @@ Necesitas Docker: los tests levantan PostgreSQL y Kafka reales en contenedores (
 - No hay flujo de cancelación: el stock reservado no se libera.
 - Las filas publicadas de `outbox_messages` y las de `processed_messages` no se purgan.
 - Un mensaje que nunca se puede enviar (por ejemplo, demasiado grande) bloquea a los que van detrás en el outbox.
-- Sin autenticación, sin Schema Registry (los mensajes son JSON simple) y sin endpoints de salud.
+- Sin autenticación y sin Schema Registry (los mensajes son JSON simple).
 
 ### Notas de la revisión
 
-Estos puntos salen de una revisión que supone que los servicios corren en una red interna cerrada, no en internet. Todavía no están corregidos.
+Estos puntos salen de una revisión que supone que los servicios corren en una red interna cerrada, no en internet.
 
-**Seguridad**
+**Corregido tras la revisión**
 
-- Kafka, Kafka UI y las dos bases de datos están publicados en todas las interfaces de red, sin usuario y sin cifrado (`PLAINTEXT`). Está bien en una máquina local. En una red compartida, publica los puertos solo en `127.0.0.1` o añade autenticación y TLS.
-- Se confía en el bus de mensajes. Quien pueda escribir en `inventory.events` y conozca un `orderId` (se devuelve en el `202`) puede confirmar o rechazar ese pedido. La idempotencia cubre el mismo `messageId`, no el mismo pedido: un segundo `OrderCreated` con otro `messageId` vuelve a reservar el stock.
-- `POST /orders` no tiene tope de líneas ni de cantidad.
-- Las contraseñas de demostración están en `appsettings.json`, en el compose y dentro de la imagen de Docker. Kafka UI usa la etiqueta `latest` y no tiene login.
+- Un motivo de rechazo largo ya no deja el pedido en `Pending`. Inventory lo acorta (los 3 primeros elementos y un recuento) y orders lo recorta al tamaño de la columna.
+- `POST /orders` acepta como máximo 100 líneas y 10.000 unidades por línea. También admite una cabecera opcional `Idempotency-Key`: un reintento con la misma clave devuelve el mismo pedido.
+- Un segundo `OrderCreated` del mismo pedido (con otro `messageId`) ya no vuelve a reservar el stock. Inventory comprueba primero el pedido, y un índice único sobre `(order_id, product_id)` es la red de seguridad.
+- Un resultado que llega para un pedido que ya está decidido se registra como aviso en el log.
+- El compose publica los puertos solo en `127.0.0.1`, fija la imagen de Kafka UI y tiene health checks y política de reinicio. Las dos APIs tienen `/health` (el proceso está vivo) y `/ready` (la base de datos, Kafka y el consumidor están bien).
+- Las advertencias del compilador hacen fallar la compilación, y un workflow de GitHub Actions compila el código y ejecuta todos los tests.
+
+**Todavía abierto**
+
+*Seguridad*
+
+- Kafka, Kafka UI y las bases de datos no tienen usuario ni cifrado (`PLAINTEXT`). Los puertos son locales, pero en una red compartida hacen falta autenticación y TLS.
+- Se confía en el bus de mensajes. Quien pueda escribir en `inventory.events` y conozca un `orderId` (se devuelve en el `202`) puede confirmar o rechazar ese pedido.
+- Las contraseñas de demostración están en `appsettings.json`, en el compose y dentro de la imagen de Docker. Kafka UI no tiene login.
 - La cabecera `error` del topic de mensajes fallidos guarda el mensaje de la excepción, que puede incluir detalles internos.
 - `AllowedHosts` es `*` y el compose no usa HTTPS.
 
-**Fiabilidad**
-
-- Un motivo de rechazo largo no cabe. Inventory junta todos los productos en un texto y la columna `RejectionReason` de orders admite 500 caracteres. Con unos 13 productos desconocidos el guardado falla, el mensaje va al topic de mensajes fallidos y el pedido se queda en `Pending`.
-- Cuando un pedido ya está decidido, un segundo resultado se ignora sin dejar rastro: gana el primero.
-- `POST /orders` no tiene clave de idempotencia. Si el cliente reintenta, se crean dos pedidos y se reserva el stock dos veces.
-
-**Rendimiento**
+*Rendimiento*
 
 - La transacción del outbox sigue abierta mientras el mensaje se envía a Kafka (hasta 10 segundos). Con más de una réplica no se garantiza el orden de los mensajes, así que usa una réplica por servicio.
 - Un solo hilo lee todas las particiones de un topic y los reintentos esperan dentro de ese hilo, así que un mensaje lento retrasa a los demás. Cada mensaje confirma su propio offset: es seguro, pero limita el caudal.
 
-**Operación**
+*Operación*
 
 - Las migraciones se ejecutan al arrancar el proceso, sin bloqueo entre réplicas.
-- Sin health checks, sin métricas (como el retraso del outbox) y sin trazas entre servicios.
-- Sin pipeline de CI, y las advertencias del compilador no se tratan como errores.
+- Sin métricas (como el retraso del outbox) y sin trazas entre servicios.
 
 ## Lecturas de referencia
 
@@ -267,6 +272,6 @@ Dos artículos usados como lista de comprobación para la revisión de este proy
 | Tests de integración con `WebApplicationFactory` y Testcontainers | Hecho |
 | Gestión central de paquetes | Hecho |
 | Revisión de consultas de EF Core (N+1, viajes a la base, índices) | Pendiente |
-| Health checks | Pendiente |
+| Health checks | Hecho (`/health` y `/ready`) |
 | `TypedResults` en Minimal APIs | Pendiente |
 | Auditoría y borrado lógico | No aplicado (no hace falta en esta demo) |
