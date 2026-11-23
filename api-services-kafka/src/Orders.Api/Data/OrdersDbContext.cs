@@ -15,7 +15,9 @@ public class OrdersDbContext(DbContextOptions<OrdersDbContext> options) : DbCont
         {
             b.HasKey(o => o.Id);
             b.Property(o => o.Status).HasConversion<string>().HasMaxLength(20);
-            b.Property(o => o.RejectionReason).HasMaxLength(500);
+            b.Property(o => o.RejectionReason).HasMaxLength(Order.MaxReasonLength);
+            b.Property(o => o.IdempotencyKey).HasMaxLength(200);
+            b.HasIndex(o => o.IdempotencyKey).IsUnique().HasFilter("idempotency_key IS NOT NULL");
             b.HasMany(o => o.Items).WithOne().HasForeignKey(i => i.OrderId).OnDelete(DeleteBehavior.Cascade);
         });
 

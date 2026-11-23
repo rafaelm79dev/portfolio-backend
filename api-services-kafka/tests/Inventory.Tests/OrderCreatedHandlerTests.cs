@@ -108,6 +108,23 @@ public class OrderCreatedHandlerTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Another_message_for_the_same_order_does_not_reserve_stock_again()
+    {
+        var (provider, handler) = await CreateAsync();
+        await using var _ = provider;
+        var orderId = Guid.NewGuid();
+        var before = await StockOfAsync(provider, SeedData.Laptop);
+
+        await handler.HandleAsync(OrderCreatedMessage(orderId, Guid.NewGuid(), (SeedData.Laptop, 2)), CancellationToken.None);
+        await handler.HandleAsync(OrderCreatedMessage(orderId, Guid.NewGuid(), (SeedData.Laptop, 2)), CancellationToken.None);
+
+        Assert.Equal(before - 2, await StockOfAsync(provider, SeedData.Laptop));
+        var rows = await OutboxAsync(provider);
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal(EventTypes.StockReserved, r.Type));
+    }
+
+    [Fact]
     public async Task Ignores_event_types_it_does_not_handle()
     {
         var (provider, handler) = await CreateAsync();

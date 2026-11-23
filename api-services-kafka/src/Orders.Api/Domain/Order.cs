@@ -27,22 +27,27 @@ public class OrderItem
 
 public class Order
 {
+    /// <summary>Size of the RejectionReason column. Longer reasons are cut, never allowed to fail the save.</summary>
+    public const int MaxReasonLength = 500;
+
     private readonly List<OrderItem> _items = [];
 
     public Guid Id { get; private set; }
     public OrderStatus Status { get; private set; }
     public string? RejectionReason { get; private set; }
+    public string? IdempotencyKey { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
     public IReadOnlyCollection<OrderItem> Items => _items;
 
     private Order() { }
 
-    public static Order Create(IReadOnlyList<OrderLine> items, DateTimeOffset now)
+    public static Order Create(IReadOnlyList<OrderLine> items, DateTimeOffset now, string? idempotencyKey = null)
     {
         var order = new Order
         {
             Id = Guid.NewGuid(),
+            IdempotencyKey = idempotencyKey,
             Status = OrderStatus.Pending,
             CreatedAt = now,
             UpdatedAt = now
@@ -63,7 +68,7 @@ public class Order
     {
         if (Status != OrderStatus.Pending) return false;
         Status = OrderStatus.Rejected;
-        RejectionReason = reason;
+        RejectionReason = reason.Length > MaxReasonLength ? reason[..MaxReasonLength] : reason;
         UpdatedAt = now;
         return true;
     }

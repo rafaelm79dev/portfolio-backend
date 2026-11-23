@@ -23,7 +23,8 @@ public class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : 
         modelBuilder.Entity<StockReservation>(b =>
         {
             b.HasKey(r => r.Id);
-            b.HasIndex(r => r.OrderId);
+            // One reservation per product and order: the database refuses a double reservation.
+            b.HasIndex(r => new { r.OrderId, r.ProductId }).IsUnique();
         });
 
         modelBuilder.Entity<OutboxMessage>(b =>

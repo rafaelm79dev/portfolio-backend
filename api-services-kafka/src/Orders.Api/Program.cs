@@ -1,9 +1,11 @@
 using Confluent.Kafka;
 using Contracts;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Orders.Api.Data;
 using Orders.Api.Features.Orders;
+using Orders.Api.Health;
 using Orders.Api.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,11 +16,13 @@ builder.Services.AddDbContext<OrdersDbContext>((sp, options) =>
         .UseNpgsql(sp.GetRequiredService<IConfiguration>().GetConnectionString("Orders"))
         .UseSnakeCaseNamingConvention());
 
-builder.Services.Configure<OutboxOptions>(builder.Configuration.GetSection("Outbox"));
+var health = builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck<OrdersDbContext>>("database", tags: ["ready"]);
 
 var kafka = builder.Configuration.GetSection("Kafka").Get<KafkaOptions>() ?? new KafkaOptions();
 if (kafka.Enabled)
 {
+    builder.Services.Configure<OutboxOptions>(builder.Configuration.GetSection("Outbox"));
     builder.Services.AddSingleton<IProducer<string, string>>(_ =>
         new ProducerBuilder<string, string>(new ProducerConfig
         {
@@ -29,7 +33,7 @@ if (kafka.Enabled)
         }).Build());
     builder.Services.AddHostedService<OutboxPublisher>();
     builder.Services.AddSingleton<IMessageHandler, StockResultHandler>();
-    builder.Services.AddHostedService(sp => new ConsumerLoop(
+    builder.Services.AddSingleton(sp => new ConsumerLoop(
         new ConsumerBuilder<string, string>(new ConsumerConfig
         {
             BootstrapServers = kafka.BootstrapServers,
@@ -41,6 +45,11 @@ if (kafka.Enabled)
         sp.GetRequiredService<IMessageHandler>(),
         Options.Create(new ConsumerLoopOptions { Topic = Topics.InventoryEvents }),
         sp.GetRequiredService<ILogger<ConsumerLoop>>()));
+    builder.Services.AddSingleton<IConsumerStatus>(sp => sp.GetRequiredService<ConsumerLoop>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsumerLoop>());
+
+    health.AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
+    health.AddCheck<ConsumerHealthCheck>("consumer", tags: ["ready"]);
 }
 
 var app = builder.Build();
@@ -52,6 +61,10 @@ using (var scope = app.Services.CreateScope())
 
 app.MapPost("/orders", CreateOrder.Handle);
 app.MapGet("/orders/{id:guid}", GetOrder.Handle);
+
+// /health: the process answers (liveness). /ready: the database, Kafka and the consumer are all fine.
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
 app.Run();
 

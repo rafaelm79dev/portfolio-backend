@@ -10,7 +10,8 @@ namespace Orders.Api.Messaging;
 /// Applies Inventory's answer (StockReserved / StockRejected) to the order. The status change and the
 /// "already processed" marker are saved in one transaction, so a message delivered twice has no second effect.
 /// </summary>
-public sealed class StockResultHandler(IServiceScopeFactory scopes, TimeProvider clock) : IMessageHandler
+public sealed class StockResultHandler(
+    IServiceScopeFactory scopes, TimeProvider clock, ILogger<StockResultHandler> logger) : IMessageHandler
 {
     public async Task HandleAsync(MessageEnvelope<JsonElement> message, CancellationToken ct)
     {
@@ -46,10 +47,15 @@ public sealed class StockResultHandler(IServiceScopeFactory scopes, TimeProvider
             ?? throw new InvalidOperationException($"Order {orderId} not found");
 
         var now = clock.GetUtcNow();
-        if (message.Type == EventTypes.StockReserved)
-            order.Confirm(now);
-        else
-            order.Reject(rejectionReason ?? "Rejected by inventory", now);
+        var changed = message.Type == EventTypes.StockReserved
+            ? order.Confirm(now)
+            : order.Reject(rejectionReason ?? "Rejected by inventory", now);
+
+        // The first result wins. Leave a trace when a later one is ignored, so it can be investigated.
+        if (!changed)
+            logger.LogWarning(
+                "Ignored {EventType} {MessageId} for order {OrderId}: the order is already {Status}",
+                message.Type, message.MessageId, orderId, order.Status);
 
         db.ProcessedMessages.Add(new ProcessedMessage(message.MessageId, now));
         await db.SaveChangesAsync(ct);

@@ -29,14 +29,18 @@ public class ReservationServiceTests(PostgresFixture postgres)
     }
 
     /// <summary>Runs one reservation the way the consumer will: inside a transaction, committed afterwards.</summary>
-    private static async Task<ReservationResult> ReserveAsync(
-        ServiceProvider provider, params (Guid productId, int quantity)[] lines)
+    private static Task<ReservationResult> ReserveAsync(
+        ServiceProvider provider, params (Guid productId, int quantity)[] lines) =>
+        ReserveForOrderAsync(provider, Guid.NewGuid(), lines);
+
+    private static async Task<ReservationResult> ReserveForOrderAsync(
+        ServiceProvider provider, Guid orderId, params (Guid productId, int quantity)[] lines)
     {
         using var scope = provider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
         await using var transaction = await db.Database.BeginTransactionAsync();
         var result = await scope.ServiceProvider.GetRequiredService<ReservationService>().ReserveAsync(
-            Guid.NewGuid(), lines.Select(l => new OrderLine(l.productId, l.quantity)).ToList(), CancellationToken.None);
+            orderId, lines.Select(l => new OrderLine(l.productId, l.quantity)).ToList(), CancellationToken.None);
         await transaction.CommitAsync();
         return result;
     }
@@ -112,6 +116,71 @@ public class ReservationServiceTests(PostgresFixture postgres)
         Assert.False(tooMuch.Reserved);
         Assert.True(exact.Reserved);
         Assert.Equal(0, await StockOfAsync(provider, SeedData.Monitor));
+    }
+
+    [Fact]
+    public async Task Reserving_the_same_order_again_does_not_take_more_stock()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var orderId = Guid.NewGuid();
+        var before = await StockOfAsync(provider, SeedData.Laptop);
+
+        var first = await ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, 2));
+        var second = await ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, 2));
+
+        Assert.True(first.Reserved);
+        Assert.True(second.Reserved); // the order already has its stock
+        Assert.Equal(before - 2, await StockOfAsync(provider, SeedData.Laptop));
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        Assert.Equal(1, await db.StockReservations.CountAsync(r => r.OrderId == orderId));
+    }
+
+    [Fact]
+    public async Task Two_simultaneous_reservations_for_the_same_order_take_stock_once()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var orderId = Guid.NewGuid();
+        var before = await StockOfAsync(provider, SeedData.Laptop);
+
+        var results = await Task.WhenAll(
+            ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, 2)),
+            ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, 2)));
+
+        Assert.All(results, r => Assert.True(r.Reserved));
+        Assert.Equal(before - 2, await StockOfAsync(provider, SeedData.Laptop));
+    }
+
+    [Fact]
+    public async Task Rejection_reason_for_many_unknown_products_fits_the_orders_column()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var lines = Enumerable.Range(0, 50).Select(_ => (Guid.NewGuid(), 1)).ToArray();
+
+        var result = await ReserveAsync(provider, lines);
+
+        Assert.False(result.Reserved);
+        Assert.True(result.Reason!.Length <= 500, $"reason has {result.Reason.Length} characters");
+        Assert.Contains("50", result.Reason); // says how many products were unknown
+    }
+
+    [Fact]
+    public async Task Rejection_reason_for_many_products_without_stock_fits_the_orders_column()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var empty = Enumerable.Range(0, 30).Select(i => new Product(Guid.NewGuid(), new string('x', 200), 0)).ToList();
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            db.Products.AddRange(empty);
+            await db.SaveChangesAsync();
+        }
+
+        var result = await ReserveAsync(provider, empty.Select(p => (p.Id, 1)).ToArray());
+
+        Assert.False(result.Reserved);
+        Assert.True(result.Reason!.Length <= 500, $"reason has {result.Reason.Length} characters");
+        Assert.Contains("stock", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

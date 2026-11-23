@@ -40,6 +40,16 @@ public class OrderTests
     }
 
     [Fact]
+    public void Reject_cuts_a_reason_that_is_longer_than_the_column()
+    {
+        var order = NewOrder();
+
+        Assert.True(order.Reject(new string('r', 2000), Now));
+
+        Assert.Equal(Order.MaxReasonLength, order.RejectionReason!.Length);
+    }
+
+    [Fact]
     public void Reject_stores_reason()
     {
         var order = NewOrder();

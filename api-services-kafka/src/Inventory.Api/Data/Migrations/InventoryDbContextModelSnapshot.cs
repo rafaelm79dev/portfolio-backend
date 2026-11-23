@@ -173,8 +173,9 @@ namespace Inventory.Api.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_stock_reservations");
 
-                    b.HasIndex("OrderId")
-                        .HasDatabaseName("ix_stock_reservations_order_id");
+                    b.HasIndex("OrderId", "ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_stock_reservations_order_id_product_id");
 
                     b.ToTable("stock_reservations", (string)null);
                 });

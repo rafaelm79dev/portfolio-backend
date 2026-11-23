@@ -1,0 +1,33 @@
+name: api-services-kafka
+
+on:
+  push:
+    paths:
+      - "api-services-kafka/**"
+      - ".github/workflows/api-services-kafka.yml"
+  pull_request:
+    paths:
+      - "api-services-kafka/**"
+      - ".github/workflows/api-services-kafka.yml"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: api-services-kafka
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Compiler warnings fail the build (see Directory.Build.props).
+      - name: Build
+        run: dotnet build --configuration Release
+
+      # The tests start PostgreSQL and Kafka in containers (Testcontainers); the runner provides Docker.
+      - name: Test
+        run: dotnet test --configuration Release --no-build

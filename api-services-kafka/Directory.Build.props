@@ -1,0 +1,6 @@
+<Project>
+  <!-- Applies to every project in this folder: a compiler warning fails the build. -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

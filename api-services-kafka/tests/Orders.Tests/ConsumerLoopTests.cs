@@ -167,6 +167,18 @@ public class ConsumerLoopTests(KafkaFixture kafka)
     }
 
     [Fact]
+    public async Task Reports_that_it_is_running_and_stops_reporting_after_shutdown()
+    {
+        var handler = new ScriptedHandler((_, _) => Task.CompletedTask);
+        await using var h = await StartAsync(handler);
+
+        await EventuallyAsync(() => h.Loop.IsRunning && h.Loop.LastActivityUtc is not null, "the loop to report activity");
+        await h.Loop.StopAsync(CancellationToken.None);
+
+        Assert.False(h.Loop.IsRunning);
+    }
+
+    [Fact]
     public async Task Retries_transient_failure_then_succeeds()
     {
         var handler = new ScriptedHandler((_, attempt) =>

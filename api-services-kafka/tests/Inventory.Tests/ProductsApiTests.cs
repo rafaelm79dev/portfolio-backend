@@ -23,6 +23,19 @@ public class ProductsApiTests(PostgresFixture postgres)
         Assert.True(laptop.Stock > 0);
     }
 
+    [Theory]
+    [InlineData("/health")]
+    [InlineData("/ready")]
+    public async Task Health_endpoints_answer_200_when_everything_is_up(string path)
+    {
+        await using var factory = new InventoryApiFactory(postgres.ConnectionString);
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     [Fact]
     public async Task Get_product_by_id_returns_it_and_unknown_id_returns_404()
     {

@@ -2,6 +2,8 @@ using System.Text.Json;
 using Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Orders.Api.Data;
 using Orders.Api.Domain;
@@ -26,8 +28,11 @@ public class StockResultHandlerTests(PostgresFixture postgres)
         using (var scope = provider.CreateScope())
             await scope.ServiceProvider.GetRequiredService<OrdersDbContext>().Database.MigrateAsync();
 
-        return (provider, new StockResultHandler(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
+        return (provider, NewHandler(provider, NullLogger<StockResultHandler>.Instance));
     }
+
+    private static StockResultHandler NewHandler(ServiceProvider provider, ILogger<StockResultHandler> logger) =>
+        new(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System, logger);
 
     private static async Task<Guid> AddPendingOrderAsync(ServiceProvider provider)
     {
@@ -81,6 +86,20 @@ public class StockResultHandlerTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Very_long_rejection_reason_still_rejects_the_order()
+    {
+        var (provider, handler) = await CreateAsync();
+        await using var _ = provider;
+        var orderId = await AddPendingOrderAsync(provider);
+
+        await handler.HandleAsync(Rejected(orderId, new string('r', 2000)), CancellationToken.None);
+
+        var order = await LoadOrderAsync(provider, orderId);
+        Assert.Equal(OrderStatus.Rejected, order.Status);
+        Assert.Equal(Order.MaxReasonLength, order.RejectionReason!.Length);
+    }
+
+    [Fact]
     public async Task Same_message_twice_is_applied_once()
     {
         var (provider, handler) = await CreateAsync();
@@ -113,6 +132,36 @@ public class StockResultHandlerTests(PostgresFixture postgres)
         var order = await LoadOrderAsync(provider, orderId);
         Assert.Equal(OrderStatus.Rejected, order.Status);
         Assert.Equal("no stock", order.RejectionReason);
+    }
+
+    [Fact]
+    public async Task A_late_reply_that_changes_nothing_is_logged_as_a_warning()
+    {
+        var (provider, _) = await CreateAsync();
+        await using var _1 = provider;
+        var logger = new ListLogger<StockResultHandler>();
+        var handler = NewHandler(provider, logger);
+        var orderId = await AddPendingOrderAsync(provider);
+        await handler.HandleAsync(Rejected(orderId, "no stock"), CancellationToken.None);
+
+        await handler.HandleAsync(Reserved(orderId), CancellationToken.None);
+
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains(orderId.ToString(), warning.Message);
+    }
+
+    [Fact]
+    public async Task A_reply_that_changes_the_order_is_not_logged_as_a_warning()
+    {
+        var (provider, _) = await CreateAsync();
+        await using var _1 = provider;
+        var logger = new ListLogger<StockResultHandler>();
+        var handler = NewHandler(provider, logger);
+        var orderId = await AddPendingOrderAsync(provider);
+
+        await handler.HandleAsync(Reserved(orderId), CancellationToken.None);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
     [Fact]

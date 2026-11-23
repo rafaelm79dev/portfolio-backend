@@ -4,7 +4,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Restore first, with only the project files, so this layer is cached until a dependency changes.
-COPY Directory.Packages.props ./
+COPY Directory.Build.props Directory.Packages.props ./
 COPY src/Contracts/Contracts.csproj src/Contracts/
 COPY src/Orders.Api/Orders.Api.csproj src/Orders.Api/
 RUN dotnet restore src/Orders.Api/Orders.Api.csproj

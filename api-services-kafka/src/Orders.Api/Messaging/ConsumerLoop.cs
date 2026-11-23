@@ -3,6 +3,7 @@ using System.Text.Json;
 using Confluent.Kafka;
 using Contracts;
 using Microsoft.Extensions.Options;
+using Orders.Api.Health;
 
 namespace Orders.Api.Messaging;
 
@@ -16,12 +17,24 @@ public sealed class ConsumerLoop(
     IProducer<string, string> deadLetterProducer,
     IMessageHandler handler,
     IOptions<ConsumerLoopOptions> options,
-    ILogger<ConsumerLoop> logger) : BackgroundService
+    ILogger<ConsumerLoop> logger) : BackgroundService, IConsumerStatus
 {
+    private long _lastActivityTicks;
+    private volatile bool _running;
+
+    public bool IsRunning => _running;
+
+    public DateTimeOffset? LastActivityUtc =>
+        Interlocked.Read(ref _lastActivityTicks) is var ticks and not 0 ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
+
+    private void Touch() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Consume() blocks; yield first so host startup is not held up.
         await Task.Yield();
+        _running = true;
+        Touch();
         consumer.Subscribe(options.Value.Topic);
         try
         {
@@ -39,8 +52,10 @@ public sealed class ConsumerLoop(
                     continue;
                 }
 
+                Touch(); // proof of life, even when there was nothing to read
                 if (result is null || result.IsPartitionEOF) continue;
                 await ProcessAsync(result, stoppingToken);
+                Touch();
             }
         }
         catch (OperationCanceledException)
@@ -49,6 +64,7 @@ public sealed class ConsumerLoop(
         }
         finally
         {
+            _running = false;
             consumer.Close();
         }
     }
