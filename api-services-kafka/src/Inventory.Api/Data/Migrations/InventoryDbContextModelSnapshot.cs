@@ -22,6 +22,32 @@ namespace Inventory.Api.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Inventory.Api.Domain.OrderDecision", b =>
+                {
+                    b.Property<Guid>("OrderId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset>("DecidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<bool>("Reserved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("reserved");
+
+                    b.HasKey("OrderId")
+                        .HasName("pk_order_decisions");
+
+                    b.ToTable("order_decisions", (string)null);
+                });
+
             modelBuilder.Entity("Inventory.Api.Domain.OutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")

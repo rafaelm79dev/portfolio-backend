@@ -16,7 +16,9 @@ public interface IConsumerStatus
 /// <summary>Unhealthy when the consumer stopped, or got stuck: a process can be alive with a dead consumer.</summary>
 public sealed class ConsumerHealthCheck(IConsumerStatus status, TimeProvider clock) : IHealthCheck
 {
-    public static readonly TimeSpan MaxSilence = TimeSpan.FromSeconds(30);
+    // One attempt can wait up to 30 seconds (the default command timeout of Npgsql) before it fails and is
+    // retried, and the loop reports activity at the start of each attempt. Stay above that wait.
+    public static readonly TimeSpan MaxSilence = TimeSpan.FromSeconds(60);
 
     public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {

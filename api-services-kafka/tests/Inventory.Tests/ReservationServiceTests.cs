@@ -137,6 +137,26 @@ public class ReservationServiceTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task An_order_that_was_rejected_stays_rejected_when_it_is_evaluated_again()
+    {
+        await using var provider = await CreateDatabaseAsync();
+        var orderId = Guid.NewGuid();
+        var before = await StockOfAsync(provider, SeedData.Laptop);
+
+        var first = await ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, before + 1));
+        // Another message for the same order, this time with a quantity that would fit.
+        var second = await ReserveForOrderAsync(provider, orderId, (SeedData.Laptop, 1));
+
+        Assert.False(first.Reserved);
+        Assert.False(second.Reserved);
+        Assert.Equal(first.Reason, second.Reason);
+        Assert.Equal(before, await StockOfAsync(provider, SeedData.Laptop));
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        Assert.Empty(await db.StockReservations.Where(r => r.OrderId == orderId).ToListAsync());
+    }
+
+    [Fact]
     public async Task Two_simultaneous_reservations_for_the_same_order_take_stock_once()
     {
         await using var provider = await CreateDatabaseAsync();

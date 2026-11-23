@@ -179,6 +179,31 @@ public class ConsumerLoopTests(KafkaFixture kafka)
     }
 
     [Fact]
+    public async Task Reports_activity_again_at_each_attempt_so_a_slow_message_is_not_mistaken_for_a_stuck_loop()
+    {
+        ConsumerLoop? loop = null;
+        var seen = new List<DateTimeOffset?>();
+        var handler = new ScriptedHandler((_, attempt) =>
+        {
+            lock (seen) seen.Add(loop!.LastActivityUtc);
+            return attempt < 3 ? throw new InvalidOperationException("transient") : Task.CompletedTask;
+        });
+        await using var h = await StartAsync(handler);
+        loop = h.Loop;
+        var id = Guid.NewGuid();
+
+        await SendAsync(h, "k", Envelope(id));
+
+        await EventuallyAsync(() => handler.Succeeded(id), "the handler to succeed on the third attempt");
+        lock (seen)
+        {
+            Assert.Equal(3, seen.Count);
+            Assert.True(seen[1] > seen[0], "no activity reported when the second attempt started");
+            Assert.True(seen[2] > seen[1], "no activity reported when the third attempt started");
+        }
+    }
+
+    [Fact]
     public async Task Retries_transient_failure_then_succeeds()
     {
         var handler = new ScriptedHandler((_, attempt) =>

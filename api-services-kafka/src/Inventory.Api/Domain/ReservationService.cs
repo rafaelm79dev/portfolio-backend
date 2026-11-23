@@ -45,24 +45,29 @@ public class ReservationService(InventoryDbContext db, TimeProvider clock)
             .FromSqlInterpolated($"SELECT * FROM products WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
             .ToDictionaryAsync(p => p.Id, ct);
 
-        // Checked after the locks above, so two requests for the same order cannot both pass it.
-        // A second OrderCreated for the same order (with another message id) must not take stock again.
-        if (await db.StockReservations.AnyAsync(r => r.OrderId == orderId, ct))
-            return ReservationResult.Success();
+        // The first decision about an order is final. A later message for the same order (another message id,
+        // maybe another content) gets the same answer and takes no stock, whether the first answer was yes or no.
+        // Checked after the locks above. If two first evaluations race (for example when every product is
+        // unknown, so there is nothing to lock), the primary key of order_decisions rejects the second one:
+        // the consumer retries it and then finds the decision.
+        var previous = await db.OrderDecisions.AsNoTracking().FirstOrDefaultAsync(d => d.OrderId == orderId, ct);
+        if (previous is not null)
+            return previous.Reserved ? ReservationResult.Success() : ReservationResult.Rejected(previous.Reason!);
+
+        var now = clock.GetUtcNow();
 
         var unknown = ids.Where(id => !products.ContainsKey(id)).ToList();
         if (unknown.Count > 0)
-            return ReservationResult.Rejected(
-                $"Unknown product(s): {Summarize(unknown.Select(id => id.ToString()).ToList())}");
+            return await RejectAsync(
+                orderId, $"Unknown product(s): {Summarize(unknown.Select(id => id.ToString()).ToList())}", now, ct);
 
         var short_ = ids
             .Where(id => products[id].Stock < wanted[id])
             .Select(id => $"{products[id].Name} (requested {wanted[id]}, available {products[id].Stock})")
             .ToList();
         if (short_.Count > 0)
-            return ReservationResult.Rejected($"Insufficient stock for: {Summarize(short_)}");
+            return await RejectAsync(orderId, $"Insufficient stock for: {Summarize(short_)}", now, ct);
 
-        var now = clock.GetUtcNow();
         foreach (var id in ids)
         {
             // Safe: the stock check above guarantees the quantity is not larger than an int stock value.
@@ -71,7 +76,15 @@ public class ReservationService(InventoryDbContext db, TimeProvider clock)
             db.StockReservations.Add(new StockReservation(orderId, id, quantity, now));
         }
 
+        db.OrderDecisions.Add(OrderDecision.ForReserved(orderId, now));
         await db.SaveChangesAsync(ct);
         return ReservationResult.Success();
+    }
+
+    private async Task<ReservationResult> RejectAsync(Guid orderId, string reason, DateTimeOffset now, CancellationToken ct)
+    {
+        db.OrderDecisions.Add(OrderDecision.ForRejected(orderId, reason, now));
+        await db.SaveChangesAsync(ct);
+        return ReservationResult.Rejected(reason);
     }
 }

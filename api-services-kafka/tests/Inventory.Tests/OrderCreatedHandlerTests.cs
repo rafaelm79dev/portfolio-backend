@@ -125,6 +125,23 @@ public class OrderCreatedHandlerTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Another_message_for_a_rejected_order_gets_the_same_rejection_and_takes_no_stock()
+    {
+        var (provider, handler) = await CreateAsync();
+        await using var _ = provider;
+        var orderId = Guid.NewGuid();
+        var before = await StockOfAsync(provider, SeedData.Monitor);
+
+        await handler.HandleAsync(OrderCreatedMessage(orderId, Guid.NewGuid(), (SeedData.Monitor, before + 1)), CancellationToken.None);
+        await handler.HandleAsync(OrderCreatedMessage(orderId, Guid.NewGuid(), (SeedData.Monitor, 1)), CancellationToken.None);
+
+        Assert.Equal(before, await StockOfAsync(provider, SeedData.Monitor));
+        var rows = await OutboxAsync(provider);
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal(EventTypes.StockRejected, r.Type));
+    }
+
+    [Fact]
     public async Task Ignores_event_types_it_does_not_handle()
     {
         var (provider, handler) = await CreateAsync();

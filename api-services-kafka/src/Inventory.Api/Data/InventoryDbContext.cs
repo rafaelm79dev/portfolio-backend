@@ -7,6 +7,7 @@ public class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : 
 {
     public DbSet<Product> Products => Set<Product>();
     public DbSet<StockReservation> StockReservations => Set<StockReservation>();
+    public DbSet<OrderDecision> OrderDecisions => Set<OrderDecision>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
 
@@ -25,6 +26,12 @@ public class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : 
             b.HasKey(r => r.Id);
             // One reservation per product and order: the database refuses a double reservation.
             b.HasIndex(r => new { r.OrderId, r.ProductId }).IsUnique();
+        });
+
+        modelBuilder.Entity<OrderDecision>(b =>
+        {
+            b.HasKey(d => d.OrderId);
+            b.Property(d => d.Reason).HasMaxLength(500);
         });
 
         modelBuilder.Entity<OutboxMessage>(b =>

@@ -90,6 +90,7 @@ public sealed class ConsumerLoop(
         {
             try
             {
+                Touch(); // every attempt is progress: a slow or retried message is not a stuck loop
                 await handler.HandleAsync(message, ct);
                 consumer.Commit(result);
                 return;
