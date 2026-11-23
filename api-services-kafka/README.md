@@ -237,7 +237,7 @@ These points come from a review that assumes the services run on a closed intern
 - A second `OrderCreated` for the same order (with another `messageId`) no longer reserves the stock again. Inventory checks the order first, and a unique index on `(order_id, product_id)` is the safety net.
 - A result that arrives for an order that is already decided is logged as a warning.
 - The compose file publishes the ports only on `127.0.0.1`, pins the Kafka UI image, and has health checks and a restart policy. Both APIs have `/health` (the process is alive) and `/ready` (the database, Kafka and the consumer are fine).
-- Compiler warnings fail the build, and a GitHub Actions workflow builds the code and runs all the tests.
+- Compiler warnings fail the build.
 
 **Still open**
 

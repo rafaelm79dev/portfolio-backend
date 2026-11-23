@@ -237,7 +237,7 @@ Estos puntos salen de una revisión que supone que los servicios corren en una r
 - Un segundo `OrderCreated` del mismo pedido (con otro `messageId`) ya no vuelve a reservar el stock. Inventory comprueba primero el pedido, y un índice único sobre `(order_id, product_id)` es la red de seguridad.
 - Un resultado que llega para un pedido que ya está decidido se registra como aviso en el log.
 - El compose publica los puertos solo en `127.0.0.1`, fija la imagen de Kafka UI y tiene health checks y política de reinicio. Las dos APIs tienen `/health` (el proceso está vivo) y `/ready` (la base de datos, Kafka y el consumidor están bien).
-- Las advertencias del compilador hacen fallar la compilación, y un workflow de GitHub Actions compila el código y ejecuta todos los tests.
+- Las advertencias del compilador hacen fallar la compilación.
 
 **Todavía abierto**
 
