@@ -1,0 +1,21 @@
+name: dbt-intro
+
+services:
+  warehouse:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5435:5432"
+    environment:
+      POSTGRES_DB: jaffle
+      POSTGRES_USER: jaffle
+      POSTGRES_PASSWORD: jaffle
+    volumes:
+      - warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jaffle -d jaffle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  warehouse-data:

@@ -1,0 +1,23 @@
+name: jaffle_intro
+version: "1.0.0"
+config-version: 2
+profile: jaffle_intro
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  jaffle_intro:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  jaffle_intro:
+    raw_orders:
+      +column_types:
+        order_date: date
+        updated_at: timestamp

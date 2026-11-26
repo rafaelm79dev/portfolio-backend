@@ -1,0 +1,13 @@
+# Local test credentials only. They match docker-compose.yml.
+jaffle_intro:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5435
+      user: jaffle
+      password: jaffle
+      dbname: jaffle
+      schema: analytics
+      threads: 4
