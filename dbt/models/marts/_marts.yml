@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: One row per customer, including customers without orders.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: first_name
+        description: Customer first name.
+      - name: last_name
+        description: Initial of the customer last name.
+      - name: first_order_date
+        description: Empty when the customer has no orders.
+      - name: last_order_date
+        description: Empty when the customer has no orders.
+      - name: number_of_orders
+        description: Number of orders, 0 when there are none.
+        data_tests: [not_null]
+      - name: total_paid
+        description: Sum of all payments, including payments of returned orders.
+        data_tests: [not_null]
+
+  - name: fct_orders
+    description: One row per order. Incremental model.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Customer who placed the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        description: Day the order was placed.
+      - name: status
+        description: Current order status.
+      - name: updated_at
+        description: Used to find new or changed orders.
+        data_tests: [not_null]
+      - name: amount
+        description: Sum of the order payments, 0 when there are none.
+        data_tests: [not_null]
