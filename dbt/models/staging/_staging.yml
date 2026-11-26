@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: One row per customer, with clear column names.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: first_name
+        description: Customer first name.
+      - name: last_name
+        description: Initial of the customer last name.
+
+  - name: stg_orders
+    description: One row per order.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Customer who placed the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_date
+        description: Day the order was placed.
+      - name: status
+        description: Current order status.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [placed, shipped, completed, return_pending, returned]
+      - name: updated_at
+        description: Last change to the order. This column was added to the original data.
+        data_tests: [not_null]
+
+  - name: stg_payments
+    description: One row per payment. An order can have more than one payment.
+    columns:
+      - name: payment_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order that was paid.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: payment_method
+        description: How the customer paid.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [credit_card, coupon, bank_transfer, gift_card]
+      - name: amount
+        description: Payment amount. The source stores cents; here it is divided by 100.
+        data_tests: [not_null]
